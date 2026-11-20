@@ -1,7 +1,7 @@
 mod api;
 
 use api::{build_router, refresh_enabled_lists, AppState};
-use clap::Parser;
+use clap::{Parser, Subcommand};
 use core_dns::DnsServer;
 use core_engine::{download_list, AegisConfig, FilterEngine, ListDownloadOutcome};
 use core_proxy::{HttpProxyServer, Socks5ProxyServer};
@@ -38,6 +38,28 @@ struct Cli {
     /// Download/update all enabled blocklists on startup
     #[arg(long, default_value_t = false)]
     update_lists: bool,
+
+    #[command(subcommand)]
+    command: Option<Commands>,
+}
+
+#[derive(Subcommand, Debug)]
+enum Commands {
+    /// Manage Aegis background service / launch at login
+    Service {
+        #[command(subcommand)]
+        action: ServiceAction,
+    },
+}
+
+#[derive(Subcommand, Debug)]
+enum ServiceAction {
+    /// Install and start Aegis as a background service (launch at login)
+    Install,
+    /// Stop and remove the Aegis background service
+    Uninstall,
+    /// Show whether the Aegis background service is installed and running
+    Status,
 }
 
 #[tokio::main]
@@ -50,6 +72,29 @@ async fn main() -> anyhow::Result<()> {
         .init();
 
     let cli = Cli::parse();
+
+    if let Some(Commands::Service { action }) = &cli.command {
+        match action {
+            ServiceAction::Install => {
+                let exe = std::env::current_exe()?;
+                let msg = core_os::service::install_service(&exe, cli.data_dir.as_deref())?;
+                println!("{msg}");
+            }
+            ServiceAction::Uninstall => {
+                let msg = core_os::service::uninstall_service()?;
+                println!("{msg}");
+            }
+            ServiceAction::Status => {
+                let st = core_os::service::service_status()?;
+                println!("Platform:  {}", st.platform);
+                println!("Installed: {}", if st.installed { "yes" } else { "no" });
+                println!("Running:   {}", if st.running { "yes" } else { "no" });
+                println!("Details:   {}", st.details);
+            }
+        }
+        return Ok(());
+    }
+
     let data_dir = cli.data_dir.unwrap_or_else(AegisConfig::default_data_dir);
     std::fs::create_dir_all(&data_dir)?;
 

@@ -1,4 +1,5 @@
 pub mod macos;
+pub mod service;
 pub mod windows;
 
 use serde::{Deserialize, Serialize};
