@@ -49,6 +49,7 @@ pub fn build_router(state: Arc<AppState>) -> Router {
         .route("/api/status", get(get_status))
         .route("/api/stats", get(get_stats))
         .route("/api/stats/reset", post(reset_stats))
+        .route("/api/stats/prune", post(prune_stats_logs))
         .route("/api/clients", get(get_clients))
         .route("/api/clients/name", put(set_client_name))
         .route("/api/logs", get(get_logs))
@@ -282,6 +283,24 @@ async fn get_stats(State(state): State<Arc<AppState>>) -> impl IntoResponse {
 async fn reset_stats(State(state): State<Arc<AppState>>) -> impl IntoResponse {
     match state.stats.reset_stats() {
         Ok(()) => StatusCode::NO_CONTENT.into_response(),
+        Err(e) => (StatusCode::INTERNAL_SERVER_ERROR, e.to_string()).into_response(),
+    }
+}
+
+async fn prune_stats_logs(State(state): State<Arc<AppState>>) -> impl IntoResponse {
+    let (days, max_rows) = {
+        let cfg = state.config.read().unwrap();
+        (cfg.log_retention_days, cfg.log_max_rows)
+    };
+    match state.stats.prune_logs(days, max_rows) {
+        Ok(deleted_rows) => {
+            let remaining_rows = state.stats.query_log_count();
+            Json(serde_json::json!({
+                "deleted_rows": deleted_rows,
+                "remaining_rows": remaining_rows
+            }))
+            .into_response()
+        }
         Err(e) => (StatusCode::INTERNAL_SERVER_ERROR, e.to_string()).into_response(),
     }
 }
@@ -585,6 +604,10 @@ struct SettingsPayload {
     auth_enabled: bool,
     #[serde(default)]
     auth_token: Option<String>,
+    #[serde(default = "default_retention_days")]
+    log_retention_days: u64,
+    #[serde(default = "default_max_rows")]
+    log_max_rows: u64,
 }
 
 fn default_true() -> bool {
@@ -593,6 +616,14 @@ fn default_true() -> bool {
 
 fn default_interval_hours() -> u64 {
     24
+}
+
+fn default_retention_days() -> u64 {
+    7
+}
+
+fn default_max_rows() -> u64 {
+    50_000
 }
 
 async fn get_settings(State(state): State<Arc<AppState>>) -> Json<SettingsPayload> {
@@ -610,6 +641,8 @@ async fn get_settings(State(state): State<Arc<AppState>>) -> Json<SettingsPayloa
         auth_enabled: cfg.api.auth_enabled,
         // Never echo back the raw secret token; UI leaves blank to keep existing token
         auth_token: None,
+        log_retention_days: cfg.log_retention_days,
+        log_max_rows: cfg.log_max_rows,
     })
 }
 
@@ -632,6 +665,8 @@ async fn update_settings(
         cfg.auto_update_interval_hours = interval_hours;
         cfg.lan_mode = req.lan_mode;
         cfg.api.auth_enabled = req.auth_enabled;
+        cfg.log_retention_days = req.log_retention_days.min(3650);
+        cfg.log_max_rows = req.log_max_rows;
         if let Some(tok) = req.auth_token.as_deref().map(str::trim).filter(|s| !s.is_empty()) {
             cfg.api.auth_token = Some(tok.to_string());
         }

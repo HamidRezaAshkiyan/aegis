@@ -355,12 +355,25 @@ async fn run_daemon(
         }
     }
 
-    // 4b. Background scheduled blocklist auto-updater
+    // 4b. Background scheduled blocklist auto-updater + hourly SQLite log pruner
     {
         let updater_state = Arc::clone(&app_state);
         let mut rx = shutdown_rx.clone();
+        // Run an initial log prune on startup
+        {
+            let (days, max_rows) = {
+                let cfg = updater_state.config.read().unwrap();
+                (cfg.log_retention_days, cfg.log_max_rows)
+            };
+            if let Ok(deleted) = updater_state.stats.prune_logs(days, max_rows) {
+                if deleted > 0 {
+                    info!(deleted, "Pruned old query_log rows on startup");
+                }
+            }
+        }
         tokio::spawn(async move {
             let mut ticker = tokio::time::interval(std::time::Duration::from_secs(60));
+            let mut minutes_elapsed: u64 = 0;
             // Skip immediate tick so startup stays snappy; first check happens after 60s
             ticker.tick().await;
             loop {
@@ -371,6 +384,21 @@ async fn run_daemon(
                         }
                     }
                     _ = ticker.tick() => {
+                        minutes_elapsed = minutes_elapsed.wrapping_add(1);
+                        if minutes_elapsed % 60 == 0 {
+                            let (days, max_rows) = {
+                                let cfg = updater_state.config.read().unwrap();
+                                (cfg.log_retention_days, cfg.log_max_rows)
+                            };
+                            match updater_state.stats.prune_logs(days, max_rows) {
+                                Ok(deleted) if deleted > 0 => {
+                                    info!(deleted, "Scheduled prune removed old query_log rows");
+                                }
+                                Err(e) => warn!(error = %e, "Scheduled query_log prune failed"),
+                                _ => {}
+                            }
+                        }
+
                         let should_refresh = {
                             let cfg = updater_state.config.read().unwrap();
                             if !cfg.auto_update_enabled {

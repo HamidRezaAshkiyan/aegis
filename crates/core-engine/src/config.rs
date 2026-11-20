@@ -145,6 +145,14 @@ fn default_auto_update_interval_hours() -> u64 {
     24
 }
 
+fn default_log_retention_days() -> u64 {
+    7
+}
+
+fn default_log_max_rows() -> u64 {
+    50_000
+}
+
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct AegisConfig {
     #[serde(default)]
@@ -171,6 +179,10 @@ pub struct AegisConfig {
     pub auto_update_enabled: bool,
     #[serde(default = "default_auto_update_interval_hours")]
     pub auto_update_interval_hours: u64,
+    #[serde(default = "default_log_retention_days")]
+    pub log_retention_days: u64,
+    #[serde(default = "default_log_max_rows")]
+    pub log_max_rows: u64,
 }
 
 pub fn default_filter_lists() -> Vec<FilterListConfig> {
@@ -251,6 +263,8 @@ impl Default for AegisConfig {
             client_names: HashMap::new(),
             auto_update_enabled: default_auto_update_enabled(),
             auto_update_interval_hours: default_auto_update_interval_hours(),
+            log_retention_days: default_log_retention_days(),
+            log_max_rows: default_log_max_rows(),
         }
     }
 }
