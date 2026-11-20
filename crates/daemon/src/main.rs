@@ -1,9 +1,9 @@
 mod api;
 
-use api::{build_router, AppState};
+use api::{build_router, refresh_enabled_lists, AppState};
 use clap::Parser;
 use core_dns::DnsServer;
-use core_engine::{download_list, AegisConfig, FilterEngine};
+use core_engine::{download_list, AegisConfig, FilterEngine, ListDownloadOutcome};
 use core_proxy::{HttpProxyServer, Socks5ProxyServer};
 use core_stats::StatsStore;
 use std::path::PathBuf;
@@ -82,8 +82,17 @@ async fn main() -> anyhow::Result<()> {
         info!("Updating enabled blocklists on startup...");
         for list in config.lists.iter_mut().filter(|l| l.enabled) {
             match download_list(&http_client, list, &data_dir).await {
-                Ok(parsed) => {
+                Ok(ListDownloadOutcome::Updated {
+                    parsed,
+                    etag,
+                    last_modified,
+                }) => {
                     list.rule_count = parsed.blocked.len();
+                    list.last_updated = Some(chrono::Utc::now().to_rfc3339());
+                    list.etag = etag;
+                    list.last_modified = last_modified;
+                }
+                Ok(ListDownloadOutcome::NotModified) => {
                     list.last_updated = Some(chrono::Utc::now().to_rfc3339());
                 }
                 Err(e) => warn!(list = %list.name, error = %e, "Failed to update list"),
@@ -182,6 +191,48 @@ async fn main() -> anyhow::Result<()> {
         stats,
         http_client,
     });
+
+    // 4b. Background scheduled blocklist auto-updater
+    {
+        let updater_state = Arc::clone(&app_state);
+        let mut rx = shutdown_rx.clone();
+        tokio::spawn(async move {
+            let mut ticker = tokio::time::interval(std::time::Duration::from_secs(60));
+            // Skip immediate tick so startup stays snappy; first check happens after 60s
+            ticker.tick().await;
+            loop {
+                tokio::select! {
+                    _ = rx.changed() => {
+                        if *rx.borrow() {
+                            break;
+                        }
+                    }
+                    _ = ticker.tick() => {
+                        let should_refresh = {
+                            let cfg = updater_state.config.read().unwrap();
+                            if !cfg.auto_update_enabled {
+                                false
+                            } else {
+                                let interval_secs = (cfg.auto_update_interval_hours.max(1) as i64) * 3600;
+                                let now = chrono::Utc::now();
+                                cfg.lists.iter().filter(|l| l.enabled).any(|l| {
+                                    match l.last_updated.as_deref().and_then(|s| chrono::DateTime::parse_from_rfc3339(s).ok()) {
+                                        Some(ts) => (now - ts.with_timezone(&chrono::Utc)).num_seconds() >= interval_secs,
+                                        None => true,
+                                    }
+                                })
+                            }
+                        };
+                        if should_refresh {
+                            info!("Scheduled blocklist auto-update triggered");
+                            let _ = refresh_enabled_lists(&updater_state).await;
+                        }
+                    }
+                }
+            }
+        });
+    }
+
     let app = build_router(app_state);
     let api_listener = TcpListener::bind(&api_addr).await?;
     info!("Aegis Dashboard & API available at http://{api_addr}");

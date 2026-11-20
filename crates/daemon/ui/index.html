@@ -198,7 +198,7 @@
         <button class="primary" id="btn-update-lists" onclick="updateAllLists()">Update All Lists</button>
       </div>
       <table>
-        <thead><tr><th>Enabled</th><th>Name</th><th>Category</th><th>Rules</th><th></th></tr></thead>
+        <thead><tr><th>Enabled</th><th>Name</th><th>Category</th><th>Rules</th><th>Updated</th><th></th></tr></thead>
         <tbody id="lists-body"></tbody>
       </table>
     </div>
@@ -270,6 +270,16 @@
           <input type="checkbox" id="s-sysproxy" />
           Enable OS System Proxy (macOS / Windows — auto-restores on exit)
         </label>
+      </div>
+      <div class="form-group">
+        <label style="display:flex;align-items:center;gap:8px;cursor:pointer;">
+          <input type="checkbox" id="s-autoupdate" />
+          Scheduled Blocklist Auto-Updates (uses ETag / If-Modified-Since)
+        </label>
+      </div>
+      <div class="form-group">
+        <label>Auto-Update Interval (hours)</label>
+        <input id="s-interval" type="number" min="1" max="168" value="24" style="max-width:140px;" />
       </div>
       <button class="primary" onclick="saveSettings()">Save &amp; Apply Live</button>
     </div>
@@ -405,15 +415,18 @@ async function resetStats() {
 
 async function loadLists() {
   const lists = await (await fetch('/api/lists')).json();
-  document.getElementById('lists-body').innerHTML = lists.map(l => `
+  document.getElementById('lists-body').innerHTML = lists.map(l => {
+    const upd = l.last_updated ? new Date(l.last_updated).toLocaleString() : 'Never';
+    return `
     <tr>
       <td><input type="checkbox" ${l.enabled ? 'checked' : ''} onchange="toggleList('${l.id}', this.checked)" /></td>
       <td><strong>${escapeHtml(l.name)}</strong><div class="mono" style="color:var(--muted);font-size:11px;">${escapeHtml(l.url)}</div></td>
       <td><span class="badge ${l.category}">${l.category}</span></td>
       <td>${l.rule_count.toLocaleString()}</td>
+      <td style="color:var(--muted);font-size:12px;">${escapeHtml(upd)}</td>
       <td><button class="sm danger" onclick="deleteList('${l.id}')">Remove</button></td>
-    </tr>
-  `).join('');
+    </tr>`;
+  }).join('');
 }
 
 async function toggleList(id, enabled) {
@@ -449,7 +462,8 @@ async function updateAllLists() {
   btn.disabled = true; btn.textContent = 'Updating...';
   try {
     const res = await (await fetch('/api/lists/update', { method: 'POST' })).json();
-    toast(`Updated ${res.updated_lists} lists (${res.active_rules.toLocaleString()} rules active)`);
+    const nm = res.not_modified_lists ? `, ${res.not_modified_lists} unchanged` : '';
+    toast(`Updated ${res.updated_lists} lists${nm} (${res.active_rules.toLocaleString()} rules active)`);
     loadLists(); loadStatus();
   } finally {
     btn.disabled = false; btn.textContent = 'Update All Lists';
@@ -494,6 +508,8 @@ async function loadSettings() {
   document.getElementById('s-mode').value = s.upstream_mode;
   document.getElementById('s-addr').value = s.upstream_addr || '';
   document.getElementById('s-sysproxy').checked = !!s.system_proxy_enabled;
+  document.getElementById('s-autoupdate').checked = s.auto_update_enabled !== false;
+  document.getElementById('s-interval').value = s.auto_update_interval_hours || 24;
 }
 
 function presetUpstream(mode, addr) {
@@ -508,6 +524,8 @@ async function saveSettings() {
     upstream_username: null,
     upstream_password: null,
     system_proxy_enabled: document.getElementById('s-sysproxy').checked,
+    auto_update_enabled: document.getElementById('s-autoupdate').checked,
+    auto_update_interval_hours: Math.max(1, parseInt(document.getElementById('s-interval').value, 10) || 24),
   };
   const resp = await fetch('/api/settings', {
     method: 'PUT', headers: { 'Content-Type': 'application/json' },

@@ -173,26 +173,67 @@ pub fn list_cache_path(data_dir: &Path, list_id: &str) -> PathBuf {
     data_dir.join("lists").join(format!("{safe_id}.txt"))
 }
 
+#[derive(Debug, Clone)]
+pub enum ListDownloadOutcome {
+    Updated {
+        parsed: ParsedRules,
+        etag: Option<String>,
+        last_modified: Option<String>,
+    },
+    NotModified,
+}
+
 /// Download a filter list from its URL and cache it on disk.
+/// Sends `If-None-Match` / `If-Modified-Since` conditional headers when a cached copy
+/// and previous validation headers are present, returning `NotModified` on HTTP 304.
 pub async fn download_list(
     client: &reqwest::Client,
     list: &FilterListConfig,
     data_dir: &Path,
-) -> anyhow::Result<ParsedRules> {
-    info!(list = %list.name, url = %list.url, "Downloading filter list");
-    let resp = client
+) -> anyhow::Result<ListDownloadOutcome> {
+    let path = list_cache_path(data_dir, &list.id);
+    let has_cache = path.exists();
+
+    info!(list = %list.name, url = %list.url, "Checking filter list for updates");
+    let mut req = client
         .get(&list.url)
-        .timeout(std::time::Duration::from_secs(30))
+        .timeout(std::time::Duration::from_secs(30));
+
+    if has_cache {
+        if let Some(etag) = list.etag.as_deref().filter(|s| !s.is_empty()) {
+            req = req.header(reqwest::header::IF_NONE_MATCH, etag);
+        }
+        if let Some(lm) = list.last_modified.as_deref().filter(|s| !s.is_empty()) {
+            req = req.header(reqwest::header::IF_MODIFIED_SINCE, lm);
+        }
+    }
+
+    let resp = req
         .send()
         .await
         .with_context(|| format!("Failed to fetch {}", list.url))?;
+
+    if resp.status() == reqwest::StatusCode::NOT_MODIFIED {
+        info!(list = %list.name, "Filter list not modified (HTTP 304)");
+        return Ok(ListDownloadOutcome::NotModified);
+    }
 
     if !resp.status().is_success() {
         anyhow::bail!("HTTP {} fetching {}", resp.status(), list.url);
     }
 
+    let etag = resp
+        .headers()
+        .get(reqwest::header::ETAG)
+        .and_then(|v| v.to_str().ok())
+        .map(|s| s.to_string());
+    let last_modified = resp
+        .headers()
+        .get(reqwest::header::LAST_MODIFIED)
+        .and_then(|v| v.to_str().ok())
+        .map(|s| s.to_string());
+
     let body = resp.text().await?;
-    let path = list_cache_path(data_dir, &list.id);
     if let Some(parent) = path.parent() {
         tokio::fs::create_dir_all(parent).await?;
     }
@@ -205,7 +246,11 @@ pub async fn download_list(
         allowed = parsed.allowed.len(),
         "Filter list updated"
     );
-    Ok(parsed)
+    Ok(ListDownloadOutcome::Updated {
+        parsed,
+        etag,
+        last_modified,
+    })
 }
 
 /// Load a cached filter list from disk if available.

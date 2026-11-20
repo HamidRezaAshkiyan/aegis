@@ -10,8 +10,8 @@ use axum::{
 };
 use chrono::Utc;
 use core_engine::{
-    download_list, AegisConfig, BlockCategory, FilterEngine, FilterListConfig, ProxyConfig,
-    UpstreamMode,
+    download_list, AegisConfig, BlockCategory, FilterEngine, FilterListConfig,
+    ListDownloadOutcome, ProxyConfig, UpstreamMode,
 };
 use core_stats::StatsStore;
 use futures_util::StreamExt;
@@ -184,6 +184,8 @@ async fn add_list(
         enabled: true,
         rule_count: 0,
         last_updated: None,
+        etag: None,
+        last_modified: None,
     };
     {
         let mut cfg = state.config.write().unwrap();
@@ -235,7 +237,17 @@ async fn delete_list(
     Json(serde_json::json!({ "active_rules": total }))
 }
 
-async fn update_lists(State(state): State<Arc<AppState>>) -> impl IntoResponse {
+#[derive(Debug, Clone, Serialize)]
+pub struct RefreshSummary {
+    pub updated_lists: usize,
+    pub not_modified_lists: usize,
+    pub active_rules: usize,
+    pub errors: Vec<String>,
+}
+
+/// Refresh all enabled blocklists using conditional HTTP requests (ETag / If-Modified-Since).
+/// Reloads the filter engine if any list changed and persists config metadata.
+pub async fn refresh_enabled_lists(state: &AppState) -> RefreshSummary {
     let lists: Vec<FilterListConfig> = state
         .config
         .read()
@@ -247,15 +259,29 @@ async fn update_lists(State(state): State<Arc<AppState>>) -> impl IntoResponse {
         .collect();
 
     let mut updated = 0usize;
+    let mut not_modified = 0usize;
     let mut errors = Vec::new();
 
     for list in lists {
         match download_list(&state.http_client, &list, &state.data_dir).await {
-            Ok(parsed) => {
+            Ok(ListDownloadOutcome::Updated {
+                parsed,
+                etag,
+                last_modified,
+            }) => {
                 updated += 1;
                 let mut cfg = state.config.write().unwrap();
                 if let Some(entry) = cfg.lists.iter_mut().find(|l| l.id == list.id) {
                     entry.rule_count = parsed.blocked.len();
+                    entry.last_updated = Some(Utc::now().to_rfc3339());
+                    entry.etag = etag;
+                    entry.last_modified = last_modified;
+                }
+            }
+            Ok(ListDownloadOutcome::NotModified) => {
+                not_modified += 1;
+                let mut cfg = state.config.write().unwrap();
+                if let Some(entry) = cfg.lists.iter_mut().find(|l| l.id == list.id) {
                     entry.last_updated = Some(Utc::now().to_rfc3339());
                 }
             }
@@ -267,15 +293,30 @@ async fn update_lists(State(state): State<Arc<AppState>>) -> impl IntoResponse {
     }
 
     state.save_config();
-    let cfg = state.config.read().unwrap().clone();
-    let total_rules = state.engine.reload_from_config(&cfg, &state.data_dir);
-    info!(updated, total_rules, "Blocklist refresh complete");
+    let total_rules = if updated > 0 {
+        let cfg = state.config.read().unwrap().clone();
+        state.engine.reload_from_config(&cfg, &state.data_dir)
+    } else {
+        state.engine.total_rules()
+    };
+    info!(
+        updated,
+        not_modified,
+        total_rules,
+        "Blocklist refresh complete"
+    );
 
-    Json(serde_json::json!({
-        "updated_lists": updated,
-        "active_rules": total_rules,
-        "errors": errors
-    }))
+    RefreshSummary {
+        updated_lists: updated,
+        not_modified_lists: not_modified,
+        active_rules: total_rules,
+        errors,
+    }
+}
+
+async fn update_lists(State(state): State<Arc<AppState>>) -> impl IntoResponse {
+    let summary = refresh_enabled_lists(&state).await;
+    Json(summary)
 }
 
 #[derive(Serialize)]
@@ -354,6 +395,18 @@ struct SettingsPayload {
     upstream_username: Option<String>,
     upstream_password: Option<String>,
     system_proxy_enabled: bool,
+    #[serde(default = "default_true")]
+    auto_update_enabled: bool,
+    #[serde(default = "default_interval_hours")]
+    auto_update_interval_hours: u64,
+}
+
+fn default_true() -> bool {
+    true
+}
+
+fn default_interval_hours() -> u64 {
+    24
 }
 
 async fn get_settings(State(state): State<Arc<AppState>>) -> Json<SettingsPayload> {
@@ -364,6 +417,8 @@ async fn get_settings(State(state): State<Arc<AppState>>) -> Json<SettingsPayloa
         upstream_username: cfg.proxy.upstream_username.clone(),
         upstream_password: cfg.proxy.upstream_password.clone(),
         system_proxy_enabled: cfg.system_proxy_enabled,
+        auto_update_enabled: cfg.auto_update_enabled,
+        auto_update_interval_hours: cfg.auto_update_interval_hours,
     })
 }
 
@@ -371,6 +426,7 @@ async fn update_settings(
     State(state): State<Arc<AppState>>,
     Json(req): Json<SettingsPayload>,
 ) -> impl IntoResponse {
+    let interval_hours = req.auto_update_interval_hours.clamp(1, 168);
     let (http_listen, socks_listen, prev_sys_proxy) = {
         let mut cfg = state.config.write().unwrap();
         let prev = cfg.system_proxy_enabled;
@@ -379,6 +435,8 @@ async fn update_settings(
         cfg.proxy.upstream_username = req.upstream_username.clone();
         cfg.proxy.upstream_password = req.upstream_password.clone();
         cfg.system_proxy_enabled = req.system_proxy_enabled;
+        cfg.auto_update_enabled = req.auto_update_enabled;
+        cfg.auto_update_interval_hours = interval_hours;
         (
             cfg.proxy.http_listen.clone(),
             cfg.proxy.socks5_listen.clone(),
