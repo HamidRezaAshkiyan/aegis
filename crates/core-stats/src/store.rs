@@ -64,6 +64,8 @@ impl StatsStore {
                 blocked_requests INTEGER NOT NULL DEFAULT 0,
                 last_seen TEXT NOT NULL
             );
+
+            CREATE INDEX IF NOT EXISTS idx_query_log_timestamp ON query_log(timestamp);
             ",
         )?;
 
@@ -255,6 +257,46 @@ impl StatsStore {
             return Vec::new();
         };
         rows.flatten().collect()
+    }
+
+    pub fn query_log_count(&self) -> u64 {
+        let Ok(conn) = self.conn.lock() else {
+            return 0;
+        };
+        conn.query_row("SELECT COUNT(*) FROM query_log", [], |row| {
+            row.get::<_, i64>(0)
+        })
+        .unwrap_or(0)
+        .max(0) as u64
+    }
+
+    /// Prune old rows from `query_log` by age (`retention_days`, 0 = disabled)
+    /// and by row cap (`max_rows`, 0 = disabled). Returns the number of deleted rows.
+    pub fn prune_logs(&self, retention_days: u64, max_rows: u64) -> anyhow::Result<u64> {
+        let mut deleted = 0u64;
+        if let Ok(conn) = self.conn.lock() {
+            if retention_days > 0 {
+                let cutoff = (chrono::Utc::now()
+                    - chrono::Duration::days(retention_days as i64))
+                .to_rfc3339();
+                let n = conn.execute(
+                    "DELETE FROM query_log WHERE timestamp < ?1",
+                    params![cutoff],
+                )?;
+                deleted += n as u64;
+            }
+            if max_rows > 0 {
+                let n = conn.execute(
+                    "DELETE FROM query_log
+                     WHERE id NOT IN (
+                         SELECT id FROM query_log ORDER BY id DESC LIMIT ?1
+                     )",
+                    params![max_rows as i64],
+                )?;
+                deleted += n as u64;
+            }
+        }
+        Ok(deleted)
     }
 
     pub fn reset_stats(&self) -> anyhow::Result<()> {

@@ -334,7 +334,20 @@
         <label>Dashboard Password / API Token (leave blank to keep current)</label>
         <input id="s-authtoken" type="password" placeholder="Enter new password or token..." />
       </div>
-      <button class="primary" onclick="saveSettings()">Save &amp; Apply Live</button>
+      <div class="row" style="margin-bottom:14px;">
+        <div class="form-group" style="margin-bottom:0;">
+          <label>Query Log Retention (days, 0 = unlimited)</label>
+          <input id="s-retention-days" type="number" min="0" max="3650" value="7" style="max-width:160px;" />
+        </div>
+        <div class="form-group" style="margin-bottom:0;">
+          <label>Max Query Log Rows (0 = unlimited)</label>
+          <input id="s-retention-rows" type="number" min="0" step="1000" value="50000" style="max-width:180px;" />
+        </div>
+      </div>
+      <div class="row">
+        <button class="primary" onclick="saveSettings()">Save &amp; Apply Live</button>
+        <button onclick="pruneLogsNow()">Prune Old Logs Now</button>
+      </div>
     </div>
 
     <div class="card" style="margin-top:16px;">
@@ -696,6 +709,8 @@ async function loadSettings() {
   document.getElementById('s-lanmode').checked = !!s.lan_mode;
   document.getElementById('s-authenabled').checked = !!s.auth_enabled;
   document.getElementById('s-authtoken').value = '';
+  document.getElementById('s-retention-days').value = s.log_retention_days ?? 7;
+  document.getElementById('s-retention-rows').value = s.log_max_rows ?? 50000;
 }
 
 function presetUpstream(mode, addr) {
@@ -717,6 +732,8 @@ async function saveSettings() {
     lan_mode: document.getElementById('s-lanmode').checked,
     auth_enabled: document.getElementById('s-authenabled').checked,
     auth_token: newTok || null,
+    log_retention_days: Math.max(0, parseInt(document.getElementById('s-retention-days').value, 10) || 0),
+    log_max_rows: Math.max(0, parseInt(document.getElementById('s-retention-rows').value, 10) || 0),
   };
   const resp = await apiFetch('/api/settings', {
     method: 'PUT', headers: { 'Content-Type': 'application/json' },
@@ -729,6 +746,16 @@ async function saveSettings() {
     loadStatus();
   } else {
     toast('Error saving settings');
+  }
+}
+
+async function pruneLogsNow() {
+  const resp = await apiFetch('/api/stats/prune', { method: 'POST' });
+  if (resp.ok) {
+    const res = await resp.json();
+    toast(`Pruned ${res.deleted_rows.toLocaleString()} rows (${res.remaining_rows.toLocaleString()} remaining)`);
+  } else {
+    toast('Failed to prune logs');
   }
 }
 
