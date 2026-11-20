@@ -283,6 +283,25 @@
       </div>
       <button class="primary" onclick="saveSettings()">Save &amp; Apply Live</button>
     </div>
+
+    <div class="card" style="margin-top:16px;">
+      <h3>Backup &amp; Restore (Config, Rules &amp; Lists)</h3>
+      <p style="color:var(--muted);font-size:13px;margin-bottom:14px;">
+        Export your <span class="mono">config.toml</span>, custom allowlist/denylist, and blocklist subscriptions in one click, or restore from a backup file.
+      </p>
+      <div class="row" style="margin-bottom:16px;">
+        <button class="primary" onclick="exportConfig('toml')">Export config.toml</button>
+        <button onclick="exportConfig('json')">Export JSON</button>
+      </div>
+      <div class="row">
+        <input type="file" id="import-file" accept=".toml,.json,.txt" />
+        <select id="import-mode">
+          <option value="merge">Merge Rules &amp; Lists</option>
+          <option value="replace">Replace Entire Config</option>
+        </select>
+        <button class="primary" onclick="importConfig()">Import Backup</button>
+      </div>
+    </div>
   </section>
 </main>
 
@@ -536,6 +555,42 @@ async function saveSettings() {
     loadStatus();
   } else {
     toast('Error saving settings');
+  }
+}
+
+async function exportConfig(format) {
+  const resp = await fetch('/api/export?format=' + encodeURIComponent(format));
+  if (!resp.ok) { toast('Export failed'); return; }
+  const text = await resp.text();
+  const blob = new Blob([text], { type: format === 'json' ? 'application/json' : 'application/toml' });
+  const url = URL.createObjectURL(blob);
+  const a = document.createElement('a');
+  a.href = url;
+  a.download = format === 'json' ? 'aegis-config.json' : 'aegis-config.toml';
+  a.click();
+  URL.revokeObjectURL(url);
+  toast(`Exported ${a.download}`);
+}
+
+async function importConfig() {
+  const fileInput = document.getElementById('import-file');
+  const file = fileInput.files && fileInput.files[0];
+  if (!file) { toast('Choose a .toml or .json file first'); return; }
+  const content = await file.text();
+  const format = file.name.toLowerCase().endsWith('.json') ? 'json' : (file.name.toLowerCase().endsWith('.toml') ? 'toml' : 'auto');
+  const mode = document.getElementById('import-mode').value;
+  const resp = await fetch('/api/import', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ format, mode, content })
+  });
+  const data = await resp.json().catch(() => ({}));
+  if (resp.ok) {
+    toast(`Imported (${data.active_rules.toLocaleString()} active rules, ${data.lists_count} lists)`);
+    fileInput.value = '';
+    loadStatus(); loadSettings(); loadLists(); loadRules();
+  } else {
+    toast(data.error || 'Import failed');
   }
 }
 

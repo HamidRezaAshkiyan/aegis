@@ -1,9 +1,9 @@
 use axum::{
     extract::{
         ws::{Message, WebSocket, WebSocketUpgrade},
-        Path as AxumPath, State,
+        Path as AxumPath, Query, State,
     },
-    http::StatusCode,
+    http::{header, HeaderMap, HeaderValue, StatusCode},
     response::{Html, IntoResponse},
     routing::{get, patch, post},
     Json, Router,
@@ -59,6 +59,8 @@ pub fn build_router(state: Arc<AppState>) -> Router {
         .route("/api/rules/allow", post(add_allow_rule))
         .route("/api/rules/deny", post(add_deny_rule))
         .route("/api/settings", get(get_settings).put(update_settings))
+        .route("/api/export", get(export_config))
+        .route("/api/import", post(import_config))
         .layer(CorsLayer::permissive())
         .with_state(state)
 }
@@ -471,4 +473,208 @@ async fn update_settings(
 
     state.save_config();
     StatusCode::NO_CONTENT.into_response()
+}
+
+#[derive(Deserialize)]
+struct ExportQuery {
+    #[serde(default = "default_export_format")]
+    format: String,
+}
+
+fn default_export_format() -> String {
+    "toml".to_string()
+}
+
+async fn export_config(
+    State(state): State<Arc<AppState>>,
+    Query(query): Query<ExportQuery>,
+) -> impl IntoResponse {
+    let cfg = state.config.read().unwrap().clone();
+    let format = query.format.to_ascii_lowercase();
+    let (body, content_type, filename) = if format == "json" {
+        match serde_json::to_string_pretty(&cfg) {
+            Ok(s) => (s, "application/json; charset=utf-8", "aegis-config.json"),
+            Err(e) => {
+                return (StatusCode::INTERNAL_SERVER_ERROR, e.to_string()).into_response();
+            }
+        }
+    } else {
+        match toml::to_string_pretty(&cfg) {
+            Ok(s) => (s, "application/toml; charset=utf-8", "aegis-config.toml"),
+            Err(e) => {
+                return (StatusCode::INTERNAL_SERVER_ERROR, e.to_string()).into_response();
+            }
+        }
+    };
+
+    let mut headers = HeaderMap::new();
+    headers.insert(header::CONTENT_TYPE, HeaderValue::from_static(content_type));
+    if let Ok(disp) = HeaderValue::from_str(&format!("attachment; filename=\"{filename}\"")) {
+        headers.insert(header::CONTENT_DISPOSITION, disp);
+    }
+    (StatusCode::OK, headers, body).into_response()
+}
+
+#[derive(Deserialize)]
+struct ImportRequest {
+    #[serde(default = "default_export_format")]
+    format: String,
+    #[serde(default = "default_import_mode")]
+    mode: String,
+    content: String,
+}
+
+fn default_import_mode() -> String {
+    "merge".to_string()
+}
+
+pub fn apply_imported_config(
+    current: &mut AegisConfig,
+    imported: AegisConfig,
+    replace: bool,
+) {
+    if replace {
+        *current = imported;
+    } else {
+        for d in imported.allowlist {
+            let norm = d.trim().to_ascii_lowercase();
+            if !norm.is_empty() && !current.allowlist.contains(&norm) {
+                current.denylist.retain(|x| x != &norm);
+                current.allowlist.push(norm);
+            }
+        }
+        for d in imported.denylist {
+            let norm = d.trim().to_ascii_lowercase();
+            if !norm.is_empty() && !current.denylist.contains(&norm) {
+                current.allowlist.retain(|x| x != &norm);
+                current.denylist.push(norm);
+            }
+        }
+        for list in imported.lists {
+            let exists = current
+                .lists
+                .iter()
+                .any(|l| l.id == list.id || l.url == list.url);
+            if !exists {
+                current.lists.push(list);
+            }
+        }
+    }
+}
+
+async fn import_config(
+    State(state): State<Arc<AppState>>,
+    Json(req): Json<ImportRequest>,
+) -> impl IntoResponse {
+    let format = req.format.to_ascii_lowercase();
+    let parsed: Result<AegisConfig, String> = if format == "json" {
+        serde_json::from_str(&req.content).map_err(|e| format!("Invalid JSON config: {e}"))
+    } else if format == "toml" {
+        toml::from_str(&req.content).map_err(|e| format!("Invalid TOML config: {e}"))
+    } else {
+        // Auto-detect: try JSON first, then TOML
+        serde_json::from_str(&req.content)
+            .or_else(|_| toml::from_str(&req.content))
+            .map_err(|e| format!("Could not parse config as JSON or TOML: {e}"))
+    };
+
+    let imported = match parsed {
+        Ok(c) => c,
+        Err(msg) => {
+            return (
+                StatusCode::BAD_REQUEST,
+                Json(serde_json::json!({ "error": msg })),
+            )
+                .into_response();
+        }
+    };
+
+    let replace = req.mode.eq_ignore_ascii_case("replace");
+    let (allow_count, deny_count, lists_count, proxy_snapshot) = {
+        let mut cfg = state.config.write().unwrap();
+        apply_imported_config(&mut cfg, imported, replace);
+        (
+            cfg.allowlist.len(),
+            cfg.denylist.len(),
+            cfg.lists.len(),
+            cfg.proxy.clone(),
+        )
+    };
+
+    if replace {
+        if let Ok(mut pcfg) = state.proxy_config.write() {
+            *pcfg = proxy_snapshot;
+        }
+    }
+
+    state.save_config();
+    let cfg = state.config.read().unwrap().clone();
+    let active_rules = state.engine.reload_from_config(&cfg, &state.data_dir);
+    info!(replace, active_rules, allow_count, deny_count, lists_count, "Imported configuration");
+
+    (
+        StatusCode::OK,
+        Json(serde_json::json!({
+            "active_rules": active_rules,
+            "allowlist_count": allow_count,
+            "denylist_count": deny_count,
+            "lists_count": lists_count
+        })),
+    )
+        .into_response()
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn import_merge_deduplicates_rules_and_lists() {
+        let mut current = AegisConfig::default();
+        current.allowlist.push("keep.example.com".to_string());
+        current.denylist.push("bad.example.com".to_string());
+
+        let mut imported = AegisConfig::default();
+        imported.allowlist.push("keep.example.com".to_string());
+        imported.allowlist.push("new-allow.example.com".to_string());
+        imported.denylist.push("new-deny.example.com".to_string());
+        imported.lists.push(FilterListConfig {
+            id: "custom-extra".to_string(),
+            name: "Extra".to_string(),
+            url: "https://example.invalid/extra.txt".to_string(),
+            category: BlockCategory::Malware,
+            enabled: true,
+            rule_count: 0,
+            last_updated: None,
+            etag: None,
+            last_modified: None,
+        });
+
+        let orig_lists = current.lists.len();
+        apply_imported_config(&mut current, imported, false);
+
+        assert_eq!(current.allowlist.len(), 2);
+        assert_eq!(current.denylist.len(), 2);
+        assert_eq!(current.lists.len(), orig_lists + 1);
+    }
+
+    #[test]
+    fn import_replace_overwrites_full_config() {
+        let mut current = AegisConfig::default();
+        current.allowlist.push("old.example.com".to_string());
+
+        let mut imported = AegisConfig::default();
+        imported.allowlist.push("fresh.example.com".to_string());
+        imported.proxy.upstream_mode = UpstreamMode::Socks5;
+        imported.proxy.upstream_addr = "127.0.0.1:7890".to_string();
+
+        // Round-trip via TOML
+        let toml_str = toml::to_string_pretty(&imported).unwrap();
+        let parsed: AegisConfig = toml::from_str(&toml_str).unwrap();
+        apply_imported_config(&mut current, parsed, true);
+
+        assert_eq!(current.allowlist, vec!["fresh.example.com".to_string()]);
+        assert_eq!(current.proxy.upstream_mode, UpstreamMode::Socks5);
+        assert_eq!(current.proxy.upstream_addr, "127.0.0.1:7890");
+    }
 }
