@@ -39,6 +39,14 @@ struct Cli {
     #[arg(long, default_value_t = false)]
     update_lists: bool,
 
+    /// Listen on all LAN interfaces (0.0.0.0) for Pi-hole style whole-network protection
+    #[arg(long, default_value_t = false)]
+    lan: bool,
+
+    /// Enable dashboard & API authentication with the specified password/token
+    #[arg(long)]
+    auth_token: Option<String>,
+
     #[command(subcommand)]
     command: Option<Commands>,
 }
@@ -116,6 +124,20 @@ async fn main() -> anyhow::Result<()> {
     if let Some(addr) = cli.api_addr {
         config.api.listen_addr = addr;
     }
+    if cli.lan {
+        config.lan_mode = true;
+    }
+    if let Some(token) = cli.auth_token {
+        if !token.trim().is_empty() {
+            config.api.auth_enabled = true;
+            config.api.auth_token = Some(token.trim().to_string());
+        }
+    }
+
+    let dns_bind = core_engine::apply_lan_bind(&config.dns.listen_addr, config.lan_mode);
+    let http_bind = core_engine::apply_lan_bind(&config.proxy.http_listen, config.lan_mode);
+    let socks5_bind = core_engine::apply_lan_bind(&config.proxy.socks5_listen, config.lan_mode);
+    let api_bind = core_engine::apply_lan_bind(&config.api.listen_addr, config.lan_mode);
 
     let stats = Arc::new(StatsStore::open(&data_dir.join("stats.db"))?);
     let engine = Arc::new(FilterEngine::new());
@@ -154,8 +176,10 @@ async fn main() -> anyhow::Result<()> {
 
     // 1. Start Local DNS Server
     if config.dns.enabled {
+        let mut dns_cfg = config.dns.clone();
+        dns_cfg.listen_addr = dns_bind.clone();
         let dns_srv = Arc::new(DnsServer::new(
-            config.dns.clone(),
+            dns_cfg,
             Arc::clone(&engine),
             Arc::clone(&stats),
         ));
@@ -169,7 +193,7 @@ async fn main() -> anyhow::Result<()> {
                 });
             }
             Err(e) => {
-                warn!(addr = %config.dns.listen_addr, error = %e, "Could not bind DNS server (continuing without DNS)");
+                warn!(addr = %dns_bind, error = %e, "Could not bind DNS server (continuing without DNS)");
             }
         }
     }
@@ -181,7 +205,7 @@ async fn main() -> anyhow::Result<()> {
             Arc::clone(&engine),
             Arc::clone(&stats),
         ));
-        match http_srv.bind(&config.proxy.http_listen).await {
+        match http_srv.bind(&http_bind).await {
             Ok(listener) => {
                 let rx = shutdown_rx.clone();
                 tokio::spawn(async move {
@@ -189,7 +213,7 @@ async fn main() -> anyhow::Result<()> {
                 });
             }
             Err(e) => {
-                warn!(addr = %config.proxy.http_listen, error = %e, "Could not bind HTTP proxy");
+                warn!(addr = %http_bind, error = %e, "Could not bind HTTP proxy");
             }
         }
     }
@@ -201,7 +225,7 @@ async fn main() -> anyhow::Result<()> {
             Arc::clone(&engine),
             Arc::clone(&stats),
         ));
-        match socks_srv.bind(&config.proxy.socks5_listen).await {
+        match socks_srv.bind(&socks5_bind).await {
             Ok(listener) => {
                 let rx = shutdown_rx.clone();
                 tokio::spawn(async move {
@@ -209,7 +233,7 @@ async fn main() -> anyhow::Result<()> {
                 });
             }
             Err(e) => {
-                warn!(addr = %config.proxy.socks5_listen, error = %e, "Could not bind SOCKS5 proxy");
+                warn!(addr = %socks5_bind, error = %e, "Could not bind SOCKS5 proxy");
             }
         }
     }
@@ -231,7 +255,7 @@ async fn main() -> anyhow::Result<()> {
     }
 
     // 5. Start Control API & Embedded Web Dashboard
-    let api_addr = config.api.listen_addr.clone();
+    let api_addr = api_bind;
     let app_state = Arc::new(AppState {
         config: RwLock::new(config),
         config_path,

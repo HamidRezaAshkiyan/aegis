@@ -1,11 +1,12 @@
 use axum::{
     extract::{
         ws::{Message, WebSocket, WebSocketUpgrade},
-        Path as AxumPath, Query, State,
+        Path as AxumPath, Query, Request, State,
     },
     http::{header, HeaderMap, HeaderValue, StatusCode},
-    response::{Html, IntoResponse},
-    routing::{get, patch, post},
+    middleware::{self, Next},
+    response::{Html, IntoResponse, Response},
+    routing::{get, patch, post, put},
     Json, Router,
 };
 use chrono::Utc;
@@ -44,11 +45,12 @@ impl AppState {
 }
 
 pub fn build_router(state: Arc<AppState>) -> Router {
-    Router::new()
-        .route("/", get(index_html))
+    let protected_api = Router::new()
         .route("/api/status", get(get_status))
         .route("/api/stats", get(get_stats))
         .route("/api/stats/reset", post(reset_stats))
+        .route("/api/clients", get(get_clients))
+        .route("/api/clients/name", put(set_client_name))
         .route("/api/logs", get(get_logs))
         .route("/api/logs/ws", get(ws_logs))
         .route("/api/pause", post(set_pause))
@@ -61,8 +63,119 @@ pub fn build_router(state: Arc<AppState>) -> Router {
         .route("/api/settings", get(get_settings).put(update_settings))
         .route("/api/export", get(export_config))
         .route("/api/import", post(import_config))
+        .route_layer(middleware::from_fn_with_state(
+            Arc::clone(&state),
+            auth_middleware,
+        ));
+
+    Router::new()
+        .route("/", get(index_html))
+        .route("/api/auth/status", get(get_auth_status))
+        .merge(protected_api)
         .layer(CorsLayer::permissive())
         .with_state(state)
+}
+
+fn constant_time_eq(a: &str, b: &str) -> bool {
+    let a = a.as_bytes();
+    let b = b.as_bytes();
+    if a.len() != b.len() {
+        return false;
+    }
+    let mut diff = 0u8;
+    for (x, y) in a.iter().zip(b.iter()) {
+        diff |= x ^ y;
+    }
+    diff == 0
+}
+
+fn extract_request_token(headers: &HeaderMap, query: Option<&str>) -> Option<String> {
+    if let Some(auth) = headers
+        .get(header::AUTHORIZATION)
+        .and_then(|v| v.to_str().ok())
+    {
+        if let Some(tok) = auth.strip_prefix("Bearer ").or_else(|| auth.strip_prefix("bearer ")) {
+            let trimmed = tok.trim();
+            if !trimmed.is_empty() {
+                return Some(trimmed.to_string());
+            }
+        }
+    }
+    if let Some(tok) = headers
+        .get("x-aegis-token")
+        .and_then(|v| v.to_str().ok())
+        .map(str::trim)
+        .filter(|s| !s.is_empty())
+    {
+        return Some(tok.to_string());
+    }
+    if let Some(q) = query {
+        for pair in q.split('&') {
+            if let Some((k, v)) = pair.split_once('=') {
+                if k == "token" && !v.is_empty() {
+                    return Some(v.to_string());
+                }
+            }
+        }
+    }
+    None
+}
+
+fn is_request_authorized(state: &AppState, headers: &HeaderMap, query: Option<&str>) -> bool {
+    let cfg = state.config.read().unwrap();
+    if !cfg.api.auth_enabled {
+        return true;
+    }
+    let Some(expected) = cfg.api.auth_token.as_deref().filter(|s| !s.is_empty()) else {
+        return true;
+    };
+    match extract_request_token(headers, query) {
+        Some(provided) => constant_time_eq(&provided, expected),
+        None => false,
+    }
+}
+
+async fn auth_middleware(
+    State(state): State<Arc<AppState>>,
+    req: Request,
+    next: Next,
+) -> Response {
+    if !is_request_authorized(&state, req.headers(), req.uri().query()) {
+        return (
+            StatusCode::UNAUTHORIZED,
+            Json(serde_json::json!({ "error": "Authentication required" })),
+        )
+            .into_response();
+    }
+    next.run(req).await
+}
+
+async fn get_auth_status(
+    State(state): State<Arc<AppState>>,
+    headers: HeaderMap,
+    uri: axum::http::Uri,
+) -> impl IntoResponse {
+    let auth_enabled = {
+        let cfg = state.config.read().unwrap();
+        cfg.api.auth_enabled
+            && cfg
+                .api
+                .auth_token
+                .as_deref()
+                .map(|s| !s.is_empty())
+                .unwrap_or(false)
+    };
+    let authenticated = is_request_authorized(&state, &headers, uri.query());
+    Json(serde_json::json!({
+        "auth_enabled": auth_enabled,
+        "authenticated": authenticated
+    }))
+}
+
+fn detect_lan_ip() -> Option<String> {
+    let sock = std::net::UdpSocket::bind("0.0.0.0:0").ok()?;
+    sock.connect("8.8.8.8:80").ok()?;
+    Some(sock.local_addr().ok()?.ip().to_string())
 }
 
 async fn index_html() -> Html<&'static str> {
@@ -82,6 +195,9 @@ struct StatusResponse {
     upstream_addr: String,
     system_proxy_enabled: bool,
     system_dns_enabled: bool,
+    lan_mode: bool,
+    lan_ip: Option<String>,
+    auth_enabled: bool,
 }
 
 async fn get_status(State(state): State<Arc<AppState>>) -> Json<StatusResponse> {
@@ -90,15 +206,73 @@ async fn get_status(State(state): State<Arc<AppState>>) -> Json<StatusResponse> 
         version: env!("CARGO_PKG_VERSION"),
         active_rules: state.engine.total_rules(),
         paused_until: state.engine.paused_until().map(|t| t.to_rfc3339()),
-        dns_listen: cfg.dns.listen_addr,
+        dns_listen: core_engine::apply_lan_bind(&cfg.dns.listen_addr, cfg.lan_mode),
         dns_upstream: cfg.dns.upstream,
-        http_proxy_listen: cfg.proxy.http_listen,
-        socks5_proxy_listen: cfg.proxy.socks5_listen,
+        http_proxy_listen: core_engine::apply_lan_bind(&cfg.proxy.http_listen, cfg.lan_mode),
+        socks5_proxy_listen: core_engine::apply_lan_bind(&cfg.proxy.socks5_listen, cfg.lan_mode),
         upstream_mode: cfg.proxy.upstream_mode,
         upstream_addr: cfg.proxy.upstream_addr,
         system_proxy_enabled: cfg.system_proxy_enabled,
         system_dns_enabled: cfg.system_dns_enabled,
+        lan_mode: cfg.lan_mode,
+        lan_ip: detect_lan_ip(),
+        auth_enabled: cfg.api.auth_enabled,
     })
+}
+
+#[derive(Serialize)]
+struct ClientView {
+    client: String,
+    name: Option<String>,
+    total_requests: u64,
+    blocked_requests: u64,
+    block_rate_percent: f64,
+    last_seen: String,
+}
+
+async fn get_clients(State(state): State<Arc<AppState>>) -> Json<Vec<ClientView>> {
+    let names = state.config.read().unwrap().client_names.clone();
+    let clients = state
+        .stats
+        .client_stats()
+        .into_iter()
+        .map(|c| ClientView {
+            name: names.get(&c.client).cloned(),
+            client: c.client,
+            total_requests: c.total_requests,
+            blocked_requests: c.blocked_requests,
+            block_rate_percent: c.block_rate_percent,
+            last_seen: c.last_seen,
+        })
+        .collect();
+    Json(clients)
+}
+
+#[derive(Deserialize)]
+struct ClientNameRequest {
+    client: String,
+    name: String,
+}
+
+async fn set_client_name(
+    State(state): State<Arc<AppState>>,
+    Json(req): Json<ClientNameRequest>,
+) -> impl IntoResponse {
+    let client = req.client.trim().to_string();
+    let name = req.name.trim().to_string();
+    if client.is_empty() {
+        return StatusCode::BAD_REQUEST;
+    }
+    {
+        let mut cfg = state.config.write().unwrap();
+        if name.is_empty() {
+            cfg.client_names.remove(&client);
+        } else {
+            cfg.client_names.insert(client, name);
+        }
+    }
+    state.save_config();
+    StatusCode::NO_CONTENT
 }
 
 async fn get_stats(State(state): State<Arc<AppState>>) -> impl IntoResponse {
@@ -405,6 +579,12 @@ struct SettingsPayload {
     auto_update_enabled: bool,
     #[serde(default = "default_interval_hours")]
     auto_update_interval_hours: u64,
+    #[serde(default)]
+    lan_mode: bool,
+    #[serde(default)]
+    auth_enabled: bool,
+    #[serde(default)]
+    auth_token: Option<String>,
 }
 
 fn default_true() -> bool {
@@ -426,6 +606,10 @@ async fn get_settings(State(state): State<Arc<AppState>>) -> Json<SettingsPayloa
         system_dns_enabled: cfg.system_dns_enabled,
         auto_update_enabled: cfg.auto_update_enabled,
         auto_update_interval_hours: cfg.auto_update_interval_hours,
+        lan_mode: cfg.lan_mode,
+        auth_enabled: cfg.api.auth_enabled,
+        // Never echo back the raw secret token; UI leaves blank to keep existing token
+        auth_token: None,
     })
 }
 
@@ -446,6 +630,11 @@ async fn update_settings(
         cfg.system_dns_enabled = req.system_dns_enabled;
         cfg.auto_update_enabled = req.auto_update_enabled;
         cfg.auto_update_interval_hours = interval_hours;
+        cfg.lan_mode = req.lan_mode;
+        cfg.api.auth_enabled = req.auth_enabled;
+        if let Some(tok) = req.auth_token.as_deref().map(str::trim).filter(|s| !s.is_empty()) {
+            cfg.api.auth_token = Some(tok.to_string());
+        }
         (
             cfg.proxy.http_listen.clone(),
             cfg.proxy.socks5_listen.clone(),
@@ -702,5 +891,44 @@ mod tests {
         assert_eq!(current.allowlist, vec!["fresh.example.com".to_string()]);
         assert_eq!(current.proxy.upstream_mode, UpstreamMode::Socks5);
         assert_eq!(current.proxy.upstream_addr, "127.0.0.1:7890");
+    }
+
+    #[test]
+    fn auth_token_extraction_and_constant_time_check() {
+        assert!(constant_time_eq("secret-123", "secret-123"));
+        assert!(!constant_time_eq("secret-123", "secret-124"));
+        assert!(!constant_time_eq("short", "longer"));
+
+        let mut headers = HeaderMap::new();
+        headers.insert(
+            header::AUTHORIZATION,
+            HeaderValue::from_static("Bearer my-token"),
+        );
+        assert_eq!(
+            extract_request_token(&headers, None).as_deref(),
+            Some("my-token")
+        );
+
+        let empty = HeaderMap::new();
+        assert_eq!(
+            extract_request_token(&empty, Some("foo=1&token=ws-tok")).as_deref(),
+            Some("ws-tok")
+        );
+    }
+
+    #[test]
+    fn lan_bind_converts_loopback_only_when_enabled() {
+        assert_eq!(
+            core_engine::apply_lan_bind("127.0.0.1:5353", false),
+            "127.0.0.1:5353"
+        );
+        assert_eq!(
+            core_engine::apply_lan_bind("127.0.0.1:5353", true),
+            "0.0.0.0:5353"
+        );
+        assert_eq!(
+            core_engine::apply_lan_bind("192.168.1.5:53", true),
+            "192.168.1.5:53"
+        );
     }
 }
