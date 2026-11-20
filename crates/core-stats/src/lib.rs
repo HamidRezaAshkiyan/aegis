@@ -1,7 +1,7 @@
 pub mod events;
 pub mod store;
 
-pub use events::{DomainCount, StatsSummary, TrafficEvent, TrafficProtocol};
+pub use events::{ClientStats, DomainCount, StatsSummary, TrafficEvent, TrafficProtocol};
 pub use store::StatsStore;
 
 #[cfg(test)]
@@ -55,5 +55,11 @@ mod tests {
         assert_eq!(summary.ads_blocked, 1);
         assert_eq!(summary.windows_telemetry_blocked, 1);
         assert_eq!(store.recent_logs(10).len(), 3);
+
+        let clients = store.client_stats();
+        assert_eq!(clients.len(), 1);
+        assert_eq!(clients[0].client, "127.0.0.1");
+        assert_eq!(clients[0].total_requests, 3);
+        assert_eq!(clients[0].blocked_requests, 2);
     }
 }

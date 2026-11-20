@@ -39,6 +39,15 @@ pub struct DomainCount {
     pub category: String,
 }
 
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct ClientStats {
+    pub client: String,
+    pub total_requests: u64,
+    pub blocked_requests: u64,
+    pub block_rate_percent: f64,
+    pub last_seen: String,
+}
+
 #[derive(Debug, Clone, Serialize, Deserialize, Default)]
 pub struct StatsSummary {
     pub total_requests: u64,

@@ -1,4 +1,4 @@
-use crate::events::{DomainCount, StatsSummary, TrafficEvent};
+use crate::events::{ClientStats, DomainCount, StatsSummary, TrafficEvent};
 use core_engine::{BlockCategory, FilterDecision};
 use rusqlite::{params, Connection};
 use std::collections::VecDeque;
@@ -57,6 +57,13 @@ impl StatsStore {
                 list_name TEXT,
                 latency_ms INTEGER NOT NULL
             );
+
+            CREATE TABLE IF NOT EXISTS clients (
+                client TEXT PRIMARY KEY,
+                total_requests INTEGER NOT NULL DEFAULT 0,
+                blocked_requests INTEGER NOT NULL DEFAULT 0,
+                last_seen TEXT NOT NULL
+            );
             ",
         )?;
 
@@ -84,10 +91,22 @@ impl StatsStore {
         // 2. Broadcast to live WebSocket listeners
         let _ = self.tx.send(event.clone());
 
-        // 3. Persist counters + domain count to SQLite
+        // 3. Persist counters + domain count + per-client stats to SQLite
         if let Ok(conn) = self.conn.lock() {
             let res: rusqlite::Result<()> = (|| {
                 increment_counter(&conn, "total_requests")?;
+                let ts_str = event.timestamp.to_rfc3339();
+                let is_blocked = matches!(event.decision, FilterDecision::Block { .. });
+                let blocked_inc: i64 = if is_blocked { 1 } else { 0 };
+                conn.execute(
+                    "INSERT INTO clients (client, total_requests, blocked_requests, last_seen)
+                     VALUES (?1, 1, ?2, ?3)
+                     ON CONFLICT(client) DO UPDATE SET
+                        total_requests = total_requests + 1,
+                        blocked_requests = blocked_requests + excluded.blocked_requests,
+                        last_seen = excluded.last_seen",
+                    params![event.client, blocked_inc, ts_str],
+                )?;
                 match &event.decision {
                     FilterDecision::Allow => {
                         conn.execute(
@@ -205,13 +224,46 @@ impl StatsStore {
             .unwrap_or_default()
     }
 
+    pub fn client_stats(&self) -> Vec<ClientStats> {
+        let Ok(conn) = self.conn.lock() else {
+            return Vec::new();
+        };
+        let Ok(mut stmt) = conn.prepare(
+            "SELECT client, total_requests, blocked_requests, last_seen
+             FROM clients
+             ORDER BY total_requests DESC
+             LIMIT 100",
+        ) else {
+            return Vec::new();
+        };
+        let Ok(rows) = stmt.query_map([], |row| {
+            let total = row.get::<_, i64>(1)?.max(0) as u64;
+            let blocked = row.get::<_, i64>(2)?.max(0) as u64;
+            let rate = if total > 0 {
+                ((blocked as f64 / total as f64) * 1000.0).round() / 10.0
+            } else {
+                0.0
+            };
+            Ok(ClientStats {
+                client: row.get(0)?,
+                total_requests: total,
+                blocked_requests: blocked,
+                block_rate_percent: rate,
+                last_seen: row.get(3)?,
+            })
+        }) else {
+            return Vec::new();
+        };
+        rows.flatten().collect()
+    }
+
     pub fn reset_stats(&self) -> anyhow::Result<()> {
         if let Ok(mut buf) = self.recent.write() {
             buf.clear();
         }
         if let Ok(conn) = self.conn.lock() {
             conn.execute_batch(
-                "DELETE FROM counters; DELETE FROM blocked_domains; DELETE FROM query_log;",
+                "DELETE FROM counters; DELETE FROM blocked_domains; DELETE FROM query_log; DELETE FROM clients;",
             )?;
         }
         Ok(())

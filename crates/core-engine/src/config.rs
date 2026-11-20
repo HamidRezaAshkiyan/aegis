@@ -1,4 +1,5 @@
 use serde::{Deserialize, Serialize};
+use std::collections::HashMap;
 use std::path::{Path, PathBuf};
 
 #[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Eq, Hash)]
@@ -90,14 +91,33 @@ impl Default for ProxyConfig {
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct ApiConfig {
     pub listen_addr: String,
+    #[serde(default)]
+    pub auth_enabled: bool,
+    #[serde(default)]
+    pub auth_token: Option<String>,
 }
 
 impl Default for ApiConfig {
     fn default() -> Self {
         Self {
             listen_addr: "127.0.0.1:4242".to_string(),
+            auth_enabled: false,
+            auth_token: None,
         }
     }
+}
+
+/// Convert a loopback bind address (e.g. `127.0.0.1:5353`) to `0.0.0.0:5353` when LAN mode is enabled.
+pub fn apply_lan_bind(addr: &str, lan_mode: bool) -> String {
+    if !lan_mode {
+        return addr.to_string();
+    }
+    if let Some((_, port)) = addr.rsplit_once(':') {
+        if addr.starts_with("127.0.0.1:") || addr.starts_with("localhost:") {
+            return format!("0.0.0.0:{port}");
+        }
+    }
+    addr.to_string()
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -143,6 +163,10 @@ pub struct AegisConfig {
     pub system_proxy_enabled: bool,
     #[serde(default)]
     pub system_dns_enabled: bool,
+    #[serde(default)]
+    pub lan_mode: bool,
+    #[serde(default)]
+    pub client_names: HashMap<String, String>,
     #[serde(default = "default_auto_update_enabled")]
     pub auto_update_enabled: bool,
     #[serde(default = "default_auto_update_interval_hours")]
@@ -223,6 +247,8 @@ impl Default for AegisConfig {
             denylist: Vec::new(),
             system_proxy_enabled: false,
             system_dns_enabled: false,
+            lan_mode: false,
+            client_names: HashMap::new(),
             auto_update_enabled: default_auto_update_enabled(),
             auto_update_interval_hours: default_auto_update_interval_hours(),
         }

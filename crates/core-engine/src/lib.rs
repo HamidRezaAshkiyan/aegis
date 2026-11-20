@@ -2,7 +2,10 @@ pub mod config;
 pub mod engine;
 pub mod lists;
 
-pub use config::{AegisConfig, BlockCategory, DnsConfig, FilterListConfig, ProxyConfig, UpstreamMode};
+pub use config::{
+    apply_lan_bind, AegisConfig, ApiConfig, BlockCategory, DnsConfig, FilterListConfig,
+    ProxyConfig, UpstreamMode,
+};
 pub use engine::{FilterDecision, FilterEngine};
 pub use lists::{download_list, parse_filter_list, ListDownloadOutcome, ParsedRules};
 

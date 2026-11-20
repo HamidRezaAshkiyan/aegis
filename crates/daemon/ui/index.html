@@ -108,6 +108,15 @@
     border: 1px solid var(--accent); padding: 10px 16px; border-radius: 10px;
     font-size: 13px; display: none; z-index: 99;
   }
+  .modal-backdrop {
+    position: fixed; inset: 0; background: rgba(6,10,18,.82);
+    display: none; align-items: center; justify-content: center; z-index: 200;
+  }
+  .modal-backdrop.open { display: flex; }
+  .modal {
+    background: var(--surface); border: 1px solid var(--border); border-radius: 14px;
+    padding: 24px; width: 100%; max-width: 380px;
+  }
 </style>
 </head>
 <body>
@@ -122,15 +131,17 @@
     <button class="sm" onclick="pauseFor(300)">Pause 5m</button>
     <button class="sm" onclick="pauseFor(900)">Pause 15m</button>
     <button class="sm primary" onclick="pauseFor(0)">Resume</button>
+    <button class="sm" id="btn-logout" style="display:none;" onclick="logoutAuth()">Lock</button>
   </div>
 </header>
 
 <nav>
   <button class="active" onclick="switchTab('overview', this)">Overview</button>
   <button onclick="switchTab('logs', this)">Live Log</button>
+  <button onclick="switchTab('devices', this)">Devices (LAN)</button>
   <button onclick="switchTab('lists', this)">Blocklists</button>
   <button onclick="switchTab('rules', this)">Custom Rules</button>
-  <button onclick="switchTab('settings', this)">Proxy &amp; VPN</button>
+  <button onclick="switchTab('settings', this)">Settings</button>
 </nav>
 
 <main>
@@ -186,6 +197,26 @@
       <table>
         <thead><tr><th>Time</th><th>Proto</th><th>Domain</th><th>Status</th><th>Action</th></tr></thead>
         <tbody id="logs-body"></tbody>
+      </table>
+    </div>
+  </section>
+
+  <!-- DEVICES / LAN CLIENTS -->
+  <section id="tab-devices" class="tab">
+    <div class="card" style="margin-bottom:16px;" id="lan-banner">
+      <h3>LAN / Pi-hole Mode</h3>
+      <p style="color:var(--muted);font-size:13px;" id="lan-instructions">
+        Enable <strong>LAN / Pi-hole Mode</strong> in Settings (or launch with <span class="mono">--lan</span>) to listen on <span class="mono">0.0.0.0</span> and protect phones, TVs, and IoT devices across your network.
+      </p>
+    </div>
+    <div class="card">
+      <div class="toolbar" style="justify-content:space-between;">
+        <h3 style="margin:0;">Connected Devices &amp; Per-IP Statistics</h3>
+        <button class="sm" onclick="loadClients()">Refresh</button>
+      </div>
+      <table>
+        <thead><tr><th>Device / IP</th><th>Total Requests</th><th>Blocked</th><th>Block Rate</th><th>Last Seen</th><th></th></tr></thead>
+        <tbody id="clients-body"><tr><td colspan="6" style="color:var(--muted)">No client activity recorded yet.</td></tr></tbody>
       </table>
     </div>
   </section>
@@ -287,6 +318,22 @@
         <label>Auto-Update Interval (hours)</label>
         <input id="s-interval" type="number" min="1" max="168" value="24" style="max-width:140px;" />
       </div>
+      <div class="form-group">
+        <label style="display:flex;align-items:center;gap:8px;cursor:pointer;">
+          <input type="checkbox" id="s-lanmode" />
+          LAN / Pi-hole Mode (bind 0.0.0.0 on next restart or launch with --lan)
+        </label>
+      </div>
+      <div class="form-group">
+        <label style="display:flex;align-items:center;gap:8px;cursor:pointer;">
+          <input type="checkbox" id="s-authenabled" />
+          Require Password / Token for Dashboard &amp; API
+        </label>
+      </div>
+      <div class="form-group">
+        <label>Dashboard Password / API Token (leave blank to keep current)</label>
+        <input id="s-authtoken" type="password" placeholder="Enter new password or token..." />
+      </div>
       <button class="primary" onclick="saveSettings()">Save &amp; Apply Live</button>
     </div>
 
@@ -311,10 +358,58 @@
   </section>
 </main>
 
+<div class="modal-backdrop" id="auth-modal">
+  <div class="modal">
+    <h3 style="margin-bottom:8px;">Aegis Dashboard Login</h3>
+    <p style="color:var(--muted);font-size:13px;margin-bottom:14px;">Enter your Aegis password or API token to access the dashboard.</p>
+    <div class="form-group">
+      <input id="auth-modal-input" type="password" placeholder="Password / Token" onkeydown="if(event.key==='Enter')submitAuth()" />
+    </div>
+    <div id="auth-error" style="color:var(--red);font-size:12px;margin-bottom:10px;display:none;">Invalid password or token.</div>
+    <button class="primary" style="width:100%;" onclick="submitAuth()">Unlock Dashboard</button>
+  </div>
+</div>
+
 <div class="toast" id="toast"></div>
 
 <script>
 let logs = [];
+let wsConn = null;
+
+function getToken() { return localStorage.getItem('aegis_token') || ''; }
+
+async function apiFetch(url, opts = {}) {
+  const headers = Object.assign({}, opts.headers || {});
+  const tok = getToken();
+  if (tok) headers['Authorization'] = 'Bearer ' + tok;
+  const resp = await fetch(url, Object.assign({}, opts, { headers }));
+  if (resp.status === 401) {
+    document.getElementById('auth-modal').classList.add('open');
+  }
+  return resp;
+}
+
+async function submitAuth() {
+  const val = document.getElementById('auth-modal-input').value.trim();
+  if (!val) return;
+  localStorage.setItem('aegis_token', val);
+  const res = await (await apiFetch('/api/auth/status')).json();
+  if (res.authenticated) {
+    document.getElementById('auth-error').style.display = 'none';
+    document.getElementById('auth-modal').classList.remove('open');
+    document.getElementById('auth-modal-input').value = '';
+    document.getElementById('btn-logout').style.display = res.auth_enabled ? 'inline-block' : 'none';
+    initDashboard();
+  } else {
+    document.getElementById('auth-error').style.display = 'block';
+  }
+}
+
+function logoutAuth() {
+  localStorage.removeItem('aegis_token');
+  if (wsConn) { try { wsConn.close(); } catch (_) {} }
+  document.getElementById('auth-modal').classList.add('open');
+}
 
 function toast(msg) {
   const el = document.getElementById('toast');
@@ -328,13 +423,16 @@ function switchTab(id, btn) {
   document.querySelectorAll('nav button').forEach(b => b.classList.remove('active'));
   document.getElementById('tab-' + id).classList.add('active');
   btn.classList.add('active');
+  if (id === 'devices') loadClients();
   if (id === 'lists') loadLists();
   if (id === 'rules') loadRules();
   if (id === 'settings') loadSettings();
 }
 
 async function loadStatus() {
-  const s = await (await fetch('/api/status')).json();
+  const resp = await apiFetch('/api/status');
+  if (!resp.ok) return;
+  const s = await resp.json();
   document.getElementById('rules-pill').textContent = s.active_rules.toLocaleString() + ' rules';
   const pill = document.getElementById('status-pill');
   if (s.paused_until) {
@@ -344,17 +442,65 @@ async function loadStatus() {
     pill.className = 'pill ok';
     pill.innerHTML = '<span class="dot"></span> Protected';
   }
+  document.getElementById('btn-logout').style.display = s.auth_enabled ? 'inline-block' : 'none';
   const chain = s.upstream_mode === 'direct' ? 'Direct' : `${s.upstream_mode.toUpperCase()} → ${s.upstream_addr}`;
+  const lanPill = s.lan_mode ? `<span class="pill ok mono">LAN Mode (${escapeHtml(s.lan_ip || '0.0.0.0')})</span>` : '';
   document.getElementById('endpoints-bar').innerHTML = `
     <span class="pill mono">DNS: ${s.dns_listen}</span>
     <span class="pill mono">HTTP Proxy: ${s.http_proxy_listen}</span>
     <span class="pill mono">SOCKS5 Proxy: ${s.socks5_proxy_listen}</span>
     <span class="pill mono">Outbound: ${chain}</span>
+    ${lanPill}
   `;
+  const lanInfo = document.getElementById('lan-instructions');
+  if (lanInfo) {
+    if (s.lan_mode && s.lan_ip) {
+      lanInfo.innerHTML = `LAN / Pi-hole Mode is <strong>active</strong>. Point your phones, TVs, router, or IoT devices to DNS <span class="mono">${escapeHtml(s.lan_ip)}</span> (or proxy <span class="mono">${escapeHtml(s.lan_ip)}:8080</span>).`;
+    } else {
+      lanInfo.innerHTML = `Enable <strong>LAN / Pi-hole Mode</strong> in Settings (or launch with <span class="mono">--lan</span>) to listen on <span class="mono">0.0.0.0</span> and protect phones, TVs, and IoT devices across your network.`;
+    }
+  }
+}
+
+async function loadClients() {
+  const resp = await apiFetch('/api/clients');
+  if (!resp.ok) return;
+  const clients = await resp.json();
+  const tbody = document.getElementById('clients-body');
+  if (!clients.length) {
+    tbody.innerHTML = '<tr><td colspan="6" style="color:var(--muted)">No client activity recorded yet.</td></tr>';
+    return;
+  }
+  tbody.innerHTML = clients.map(c => {
+    const label = c.name ? `<strong>${escapeHtml(c.name)}</strong> <span class="mono" style="color:var(--muted)">(${escapeHtml(c.client)})</span>` : `<span class="mono">${escapeHtml(c.client)}</span>`;
+    const seen = c.last_seen ? new Date(c.last_seen).toLocaleString() : '-';
+    return `<tr>
+      <td>${label}</td>
+      <td>${c.total_requests.toLocaleString()}</td>
+      <td>${c.blocked_requests.toLocaleString()}</td>
+      <td><span class="badge custom">${c.block_rate_percent.toFixed(1)}%</span></td>
+      <td style="color:var(--muted);font-size:12px;">${escapeHtml(seen)}</td>
+      <td><button class="sm" onclick="renameClient('${escapeHtml(c.client)}', '${escapeHtml(c.name || '')}')">Rename</button></td>
+    </tr>`;
+  }).join('');
+}
+
+async function renameClient(client, currentName) {
+  const name = prompt(`Friendly name for ${client} (leave empty to clear):`, currentName);
+  if (name === null) return;
+  await apiFetch('/api/clients/name', {
+    method: 'PUT',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ client, name: name.trim() })
+  });
+  loadClients();
+  toast('Device name updated');
 }
 
 async function loadStats() {
-  const st = await (await fetch('/api/stats')).json();
+  const resp = await apiFetch('/api/stats');
+  if (!resp.ok) return;
+  const st = await resp.json();
   document.getElementById('m-ads').textContent = st.ads_blocked.toLocaleString();
   document.getElementById('m-trackers').textContent = st.trackers_blocked.toLocaleString();
   const osTel = st.windows_telemetry_blocked + st.macos_telemetry_blocked;
@@ -380,7 +526,9 @@ async function loadStats() {
 }
 
 async function loadLogs() {
-  logs = await (await fetch('/api/logs')).json();
+  const resp = await apiFetch('/api/logs');
+  if (!resp.ok) return;
+  logs = await resp.json();
   renderLogs();
 }
 
@@ -413,7 +561,7 @@ function renderLogs() {
 }
 
 async function quickRule(kind, domain) {
-  await fetch('/api/rules/' + kind, {
+  await apiFetch('/api/rules/' + kind, {
     method: 'POST', headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify({ domain })
   });
@@ -422,7 +570,7 @@ async function quickRule(kind, domain) {
 }
 
 async function pauseFor(seconds) {
-  await fetch('/api/pause', {
+  await apiFetch('/api/pause', {
     method: 'POST', headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify({ seconds })
   });
@@ -431,15 +579,18 @@ async function pauseFor(seconds) {
 }
 
 async function resetStats() {
-  await fetch('/api/stats/reset', { method: 'POST' });
+  await apiFetch('/api/stats/reset', { method: 'POST' });
   logs = [];
   renderLogs();
   loadStats();
+  loadClients();
   toast('Statistics reset');
 }
 
 async function loadLists() {
-  const lists = await (await fetch('/api/lists')).json();
+  const resp = await apiFetch('/api/lists');
+  if (!resp.ok) return;
+  const lists = await resp.json();
   document.getElementById('lists-body').innerHTML = lists.map(l => {
     const upd = l.last_updated ? new Date(l.last_updated).toLocaleString() : 'Never';
     return `
@@ -455,7 +606,7 @@ async function loadLists() {
 }
 
 async function toggleList(id, enabled) {
-  await fetch('/api/lists/' + encodeURIComponent(id), {
+  await apiFetch('/api/lists/' + encodeURIComponent(id), {
     method: 'PATCH', headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify({ enabled })
   });
@@ -463,7 +614,7 @@ async function toggleList(id, enabled) {
 }
 
 async function deleteList(id) {
-  await fetch('/api/lists/' + encodeURIComponent(id), { method: 'DELETE' });
+  await apiFetch('/api/lists/' + encodeURIComponent(id), { method: 'DELETE' });
   loadLists(); loadStatus();
 }
 
@@ -472,7 +623,7 @@ async function addList() {
   const url = document.getElementById('new-list-url').value.trim();
   const category = document.getElementById('new-list-cat').value;
   if (!name || !url) return;
-  await fetch('/api/lists', {
+  await apiFetch('/api/lists', {
     method: 'POST', headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify({ name, url, category })
   });
@@ -486,7 +637,9 @@ async function updateAllLists() {
   const btn = document.getElementById('btn-update-lists');
   btn.disabled = true; btn.textContent = 'Updating...';
   try {
-    const res = await (await fetch('/api/lists/update', { method: 'POST' })).json();
+    const resp = await apiFetch('/api/lists/update', { method: 'POST' });
+    if (!resp.ok) return;
+    const res = await resp.json();
     const nm = res.not_modified_lists ? `, ${res.not_modified_lists} unchanged` : '';
     toast(`Updated ${res.updated_lists} lists${nm} (${res.active_rules.toLocaleString()} rules active)`);
     loadLists(); loadStatus();
@@ -496,7 +649,9 @@ async function updateAllLists() {
 }
 
 async function loadRules() {
-  const r = await (await fetch('/api/rules')).json();
+  const resp = await apiFetch('/api/rules');
+  if (!resp.ok) return;
+  const r = await resp.json();
   document.getElementById('denylist-items').innerHTML = r.denylist.map(d =>
     `<div class="row" style="justify-content:space-between;padding:6px 0;border-bottom:1px solid var(--border);">
       <span class="mono">${escapeHtml(d)}</span>
@@ -521,7 +676,7 @@ async function addRule(kind) {
 }
 
 async function removeRule(domain) {
-  await fetch('/api/rules', {
+  await apiFetch('/api/rules', {
     method: 'DELETE', headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify({ domain })
   });
@@ -529,13 +684,18 @@ async function removeRule(domain) {
 }
 
 async function loadSettings() {
-  const s = await (await fetch('/api/settings')).json();
+  const resp = await apiFetch('/api/settings');
+  if (!resp.ok) return;
+  const s = await resp.json();
   document.getElementById('s-mode').value = s.upstream_mode;
   document.getElementById('s-addr').value = s.upstream_addr || '';
   document.getElementById('s-sysproxy').checked = !!s.system_proxy_enabled;
   document.getElementById('s-sysdns').checked = !!s.system_dns_enabled;
   document.getElementById('s-autoupdate').checked = s.auto_update_enabled !== false;
   document.getElementById('s-interval').value = s.auto_update_interval_hours || 24;
+  document.getElementById('s-lanmode').checked = !!s.lan_mode;
+  document.getElementById('s-authenabled').checked = !!s.auth_enabled;
+  document.getElementById('s-authtoken').value = '';
 }
 
 function presetUpstream(mode, addr) {
@@ -544,6 +704,7 @@ function presetUpstream(mode, addr) {
 }
 
 async function saveSettings() {
+  const newTok = document.getElementById('s-authtoken').value.trim();
   const payload = {
     upstream_mode: document.getElementById('s-mode').value,
     upstream_addr: document.getElementById('s-addr').value.trim(),
@@ -553,12 +714,17 @@ async function saveSettings() {
     system_dns_enabled: document.getElementById('s-sysdns').checked,
     auto_update_enabled: document.getElementById('s-autoupdate').checked,
     auto_update_interval_hours: Math.max(1, parseInt(document.getElementById('s-interval').value, 10) || 24),
+    lan_mode: document.getElementById('s-lanmode').checked,
+    auth_enabled: document.getElementById('s-authenabled').checked,
+    auth_token: newTok || null,
   };
-  const resp = await fetch('/api/settings', {
+  const resp = await apiFetch('/api/settings', {
     method: 'PUT', headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify(payload)
   });
   if (resp.ok) {
+    if (newTok) localStorage.setItem('aegis_token', newTok);
+    document.getElementById('s-authtoken').value = '';
     toast('Settings saved & applied live');
     loadStatus();
   } else {
@@ -567,7 +733,7 @@ async function saveSettings() {
 }
 
 async function exportConfig(format) {
-  const resp = await fetch('/api/export?format=' + encodeURIComponent(format));
+  const resp = await apiFetch('/api/export?format=' + encodeURIComponent(format));
   if (!resp.ok) { toast('Export failed'); return; }
   const text = await resp.text();
   const blob = new Blob([text], { type: format === 'json' ? 'application/json' : 'application/toml' });
@@ -587,7 +753,7 @@ async function importConfig() {
   const content = await file.text();
   const format = file.name.toLowerCase().endsWith('.json') ? 'json' : (file.name.toLowerCase().endsWith('.toml') ? 'toml' : 'auto');
   const mode = document.getElementById('import-mode').value;
-  const resp = await fetch('/api/import', {
+  const resp = await apiFetch('/api/import', {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify({ format, mode, content })
@@ -608,22 +774,39 @@ function escapeHtml(s) {
 
 function connectWs() {
   const proto = location.protocol === 'https:' ? 'wss:' : 'ws:';
-  const ws = new WebSocket(`${proto}//${location.host}/api/logs/ws`);
-  ws.onmessage = (ev) => {
+  const tok = getToken();
+  const q = tok ? `?token=${encodeURIComponent(tok)}` : '';
+  wsConn = new WebSocket(`${proto}//${location.host}/api/logs/ws${q}`);
+  wsConn.onmessage = (ev) => {
     const item = JSON.parse(ev.data);
     logs.unshift(item);
     if (logs.length > 300) logs.pop();
     renderLogs();
     loadStats();
   };
-  ws.onclose = () => setTimeout(connectWs, 2000);
+  wsConn.onclose = () => setTimeout(connectWs, 2500);
 }
 
-loadStatus();
-loadStats();
-loadLogs();
-connectWs();
-setInterval(loadStats, 5000);
+let statsTimer = null;
+function initDashboard() {
+  loadStatus();
+  loadStats();
+  loadLogs();
+  connectWs();
+  if (!statsTimer) statsTimer = setInterval(loadStats, 5000);
+}
+
+(async function boot() {
+  try {
+    const res = await (await apiFetch('/api/auth/status')).json();
+    if (res.auth_enabled && !res.authenticated) {
+      document.getElementById('auth-modal').classList.add('open');
+      return;
+    }
+    document.getElementById('btn-logout').style.display = res.auth_enabled ? 'inline-block' : 'none';
+  } catch (_) {}
+  initDashboard();
+})();
 </script>
 </body>
 </html>
