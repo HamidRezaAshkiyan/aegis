@@ -35,7 +35,7 @@ pub struct AppState {
 }
 
 impl AppState {
-    fn save_config(&self) {
+    pub(crate) fn save_config(&self) {
         if let Ok(cfg) = self.config.read() {
             if let Err(e) = cfg.save(&self.config_path) {
                 warn!(error = %e, "Failed to persist config.toml");

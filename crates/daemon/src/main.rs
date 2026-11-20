@@ -1,4 +1,5 @@
 mod api;
+mod tray;
 
 use api::{build_router, refresh_enabled_lists, AppState};
 use clap::{Parser, Subcommand};
@@ -47,6 +48,10 @@ struct Cli {
     #[arg(long)]
     auth_token: Option<String>,
 
+    /// Run headless without a native system tray / menu bar icon
+    #[arg(long, default_value_t = false)]
+    no_tray: bool,
+
     #[command(subcommand)]
     command: Option<Commands>,
 }
@@ -70,8 +75,7 @@ enum ServiceAction {
     Status,
 }
 
-#[tokio::main]
-async fn main() -> anyhow::Result<()> {
+fn main() -> anyhow::Result<()> {
     tracing_subscriber::fmt()
         .with_env_filter(
             tracing_subscriber::EnvFilter::try_from_default_env()
@@ -106,7 +110,7 @@ async fn main() -> anyhow::Result<()> {
     let data_dir = cli.data_dir.unwrap_or_else(AegisConfig::default_data_dir);
     std::fs::create_dir_all(&data_dir)?;
 
-    // Crash-recovery: restore OS proxy settings if a previous run terminated unexpectedly
+    // Crash-recovery: restore OS proxy & DNS settings if a previous run terminated unexpectedly
     core_os::recover_if_dirty(&data_dir);
 
     let config_path = data_dir.join("config.toml");
@@ -138,50 +142,147 @@ async fn main() -> anyhow::Result<()> {
     let http_bind = core_engine::apply_lan_bind(&config.proxy.http_listen, config.lan_mode);
     let socks5_bind = core_engine::apply_lan_bind(&config.proxy.socks5_listen, config.lan_mode);
     let api_bind = core_engine::apply_lan_bind(&config.api.listen_addr, config.lan_mode);
+    let dashboard_url = format!(
+        "http://{}",
+        if api_bind.starts_with("0.0.0.0:") {
+            api_bind.replacen("0.0.0.0:", "127.0.0.1:", 1)
+        } else {
+            api_bind.clone()
+        }
+    );
 
     let stats = Arc::new(StatsStore::open(&data_dir.join("stats.db"))?);
     let engine = Arc::new(FilterEngine::new());
     let http_client = reqwest::Client::builder()
         .user_agent(format!("AegisBlocker/{}", env!("CARGO_PKG_VERSION")))
         .build()?;
+    let proxy_config = Arc::new(RwLock::new(config.proxy.clone()));
 
-    if cli.update_lists {
+    let app_state = Arc::new(AppState {
+        config: RwLock::new(config),
+        config_path,
+        data_dir: data_dir.clone(),
+        proxy_config,
+        engine,
+        stats,
+        http_client,
+    });
+
+    let (shutdown_tx, shutdown_rx) = watch::channel(false);
+    let update_lists = cli.update_lists;
+    let use_tray = !cli.no_tray && cfg!(any(target_os = "macos", target_os = "windows"));
+
+    if use_tray {
+        let daemon_state = Arc::clone(&app_state);
+        let daemon_tx = shutdown_tx.clone();
+        let daemon_rx = shutdown_rx.clone();
+        let handle = std::thread::Builder::new()
+            .name("aegis-daemon".to_string())
+            .spawn(move || {
+                let rt = tokio::runtime::Runtime::new().expect("tokio runtime");
+                if let Err(e) = rt.block_on(run_daemon(
+                    daemon_state,
+                    update_lists,
+                    dns_bind,
+                    http_bind,
+                    socks5_bind,
+                    api_bind,
+                    daemon_tx,
+                    daemon_rx,
+                )) {
+                    warn!(error = %e, "Aegis daemon exited with error");
+                }
+            })?;
+
+        let tray_res = tray::run_tray_loop(tray::TrayContext {
+            state: Arc::clone(&app_state),
+            dashboard_url,
+            shutdown_tx: shutdown_tx.clone(),
+            shutdown_rx,
+        });
+        let _ = shutdown_tx.send(true);
+        let _ = handle.join();
+        tray_res
+    } else {
+        let rt = tokio::runtime::Runtime::new()?;
+        rt.block_on(run_daemon(
+            app_state,
+            update_lists,
+            dns_bind,
+            http_bind,
+            socks5_bind,
+            api_bind,
+            shutdown_tx,
+            shutdown_rx,
+        ))
+    }
+}
+
+#[allow(clippy::too_many_arguments)]
+async fn run_daemon(
+    app_state: Arc<AppState>,
+    update_lists: bool,
+    dns_bind: String,
+    http_bind: String,
+    socks5_bind: String,
+    api_bind: String,
+    shutdown_tx: watch::Sender<bool>,
+    shutdown_rx: watch::Receiver<bool>,
+) -> anyhow::Result<()> {
+    let data_dir = app_state.data_dir.clone();
+
+    if update_lists {
         info!("Updating enabled blocklists on startup...");
-        for list in config.lists.iter_mut().filter(|l| l.enabled) {
-            match download_list(&http_client, list, &data_dir).await {
+        let lists = app_state
+            .config
+            .read()
+            .unwrap()
+            .lists
+            .iter()
+            .filter(|l| l.enabled)
+            .cloned()
+            .collect::<Vec<_>>();
+        for list in lists {
+            match download_list(&app_state.http_client, &list, &data_dir).await {
                 Ok(ListDownloadOutcome::Updated {
                     parsed,
                     etag,
                     last_modified,
                 }) => {
-                    list.rule_count = parsed.blocked.len();
-                    list.last_updated = Some(chrono::Utc::now().to_rfc3339());
-                    list.etag = etag;
-                    list.last_modified = last_modified;
+                    let mut cfg = app_state.config.write().unwrap();
+                    if let Some(entry) = cfg.lists.iter_mut().find(|l| l.id == list.id) {
+                        entry.rule_count = parsed.blocked.len();
+                        entry.last_updated = Some(chrono::Utc::now().to_rfc3339());
+                        entry.etag = etag;
+                        entry.last_modified = last_modified;
+                    }
                 }
                 Ok(ListDownloadOutcome::NotModified) => {
-                    list.last_updated = Some(chrono::Utc::now().to_rfc3339());
+                    let mut cfg = app_state.config.write().unwrap();
+                    if let Some(entry) = cfg.lists.iter_mut().find(|l| l.id == list.id) {
+                        entry.last_updated = Some(chrono::Utc::now().to_rfc3339());
+                    }
                 }
                 Err(e) => warn!(list = %list.name, error = %e, "Failed to update list"),
             }
         }
-        let _ = config.save(&config_path);
+        app_state.save_config();
     }
 
-    let active_rules = engine.reload_from_config(&config, &data_dir);
+    let config_snapshot = app_state.config.read().unwrap().clone();
+    let active_rules = app_state
+        .engine
+        .reload_from_config(&config_snapshot, &data_dir);
     info!(active_rules, data_dir = %data_dir.display(), "Filter engine initialized");
 
-    let proxy_config = Arc::new(RwLock::new(config.proxy.clone()));
-    let (shutdown_tx, shutdown_rx) = watch::channel(false);
-
     // 1. Start Local DNS Server
-    if config.dns.enabled {
-        let mut dns_cfg = config.dns.clone();
+    if config_snapshot.dns.enabled {
+        let mut dns_cfg = config_snapshot.dns.clone();
         dns_cfg.listen_addr = dns_bind.clone();
         let dns_srv = Arc::new(DnsServer::new(
             dns_cfg,
-            Arc::clone(&engine),
-            Arc::clone(&stats),
+            Arc::clone(&app_state.engine),
+            Arc::clone(&app_state.stats),
         ));
         match dns_srv.bind().await {
             Ok(sock) => {
@@ -199,11 +300,11 @@ async fn main() -> anyhow::Result<()> {
     }
 
     // 2. Start HTTP/HTTPS Proxy
-    if config.proxy.http_enabled {
+    if config_snapshot.proxy.http_enabled {
         let http_srv = Arc::new(HttpProxyServer::new(
-            Arc::clone(&proxy_config),
-            Arc::clone(&engine),
-            Arc::clone(&stats),
+            Arc::clone(&app_state.proxy_config),
+            Arc::clone(&app_state.engine),
+            Arc::clone(&app_state.stats),
         ));
         match http_srv.bind(&http_bind).await {
             Ok(listener) => {
@@ -219,11 +320,11 @@ async fn main() -> anyhow::Result<()> {
     }
 
     // 3. Start SOCKS5 Proxy
-    if config.proxy.socks5_enabled {
+    if config_snapshot.proxy.socks5_enabled {
         let socks_srv = Arc::new(Socks5ProxyServer::new(
-            Arc::clone(&proxy_config),
-            Arc::clone(&engine),
-            Arc::clone(&stats),
+            Arc::clone(&app_state.proxy_config),
+            Arc::clone(&app_state.engine),
+            Arc::clone(&app_state.stats),
         ));
         match socks_srv.bind(&socks5_bind).await {
             Ok(listener) => {
@@ -239,32 +340,20 @@ async fn main() -> anyhow::Result<()> {
     }
 
     // 4. Enable OS System Proxy & System DNS if configured
-    if config.system_proxy_enabled {
+    if config_snapshot.system_proxy_enabled {
         if let Err(e) = core_os::enable_system_proxy(
             &data_dir,
-            &config.proxy.http_listen,
-            &config.proxy.socks5_listen,
+            &config_snapshot.proxy.http_listen,
+            &config_snapshot.proxy.socks5_listen,
         ) {
             warn!(error = %e, "Failed to enable system proxy on startup");
         }
     }
-    if config.system_dns_enabled {
-        if let Err(e) = core_os::enable_system_dns(&data_dir, &config.dns.listen_addr) {
+    if config_snapshot.system_dns_enabled {
+        if let Err(e) = core_os::enable_system_dns(&data_dir, &config_snapshot.dns.listen_addr) {
             warn!(error = %e, "Failed to enable system DNS on startup");
         }
     }
-
-    // 5. Start Control API & Embedded Web Dashboard
-    let api_addr = api_bind;
-    let app_state = Arc::new(AppState {
-        config: RwLock::new(config),
-        config_path,
-        data_dir: data_dir.clone(),
-        proxy_config,
-        engine,
-        stats,
-        http_client,
-    });
 
     // 4b. Background scheduled blocklist auto-updater
     {
@@ -307,14 +396,28 @@ async fn main() -> anyhow::Result<()> {
         });
     }
 
+    // 5. Start Control API & Embedded Web Dashboard
     let app = build_router(app_state);
-    let api_listener = TcpListener::bind(&api_addr).await?;
-    info!("Aegis Dashboard & API available at http://{api_addr}");
+    let api_listener = TcpListener::bind(&api_bind).await?;
+    info!("Aegis Dashboard & API available at http://{api_bind}");
 
+    let mut api_shutdown_rx = shutdown_rx.clone();
     let shutdown_signal = async move {
-        let _ = tokio::signal::ctrl_c().await;
-        info!("Shutdown signal received");
-        let _ = shutdown_tx.send(true);
+        tokio::select! {
+            _ = tokio::signal::ctrl_c() => {
+                info!("Ctrl+C received");
+                let _ = shutdown_tx.send(true);
+            }
+            _ = async {
+                while !*api_shutdown_rx.borrow() {
+                    if api_shutdown_rx.changed().await.is_err() {
+                        break;
+                    }
+                }
+            } => {
+                info!("Shutdown signal received");
+            }
+        }
     };
 
     axum::serve(api_listener, app)
