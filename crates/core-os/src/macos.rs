@@ -70,3 +70,77 @@ pub fn disable_system_proxy(services: &[String]) -> anyhow::Result<()> {
     }
     Ok(())
 }
+
+/// Parse `networksetup -getdnsservers <service>` output into a list of DNS server IPs.
+/// Returns an empty Vec when DHCP / no static DNS servers are configured.
+pub fn parse_dns_servers_output(output: &str) -> Vec<String> {
+    let trimmed = output.trim();
+    if trimmed.is_empty() || trimmed.contains("There aren't any DNS Servers") {
+        return Vec::new();
+    }
+    trimmed
+        .lines()
+        .map(|l| l.trim())
+        .filter(|l| !l.is_empty() && !l.contains("There aren't any"))
+        .map(|l| l.to_string())
+        .collect()
+}
+
+#[cfg(target_os = "macos")]
+pub fn enable_system_dns(dns_ip: &str) -> anyhow::Result<Vec<crate::DnsInterfaceSnapshot>> {
+    let services = list_active_services()?;
+    let mut snapshots = Vec::new();
+    for svc in services {
+        let prev_out = Command::new("networksetup")
+            .args(["-getdnsservers", &svc])
+            .output()
+            .map(|o| String::from_utf8_lossy(&o.stdout).to_string())
+            .unwrap_or_default();
+        let previous_servers = parse_dns_servers_output(&prev_out);
+
+        let ok = Command::new("networksetup")
+            .args(["-setdnsservers", &svc, dns_ip])
+            .status()
+            .map(|s| s.success())
+            .unwrap_or(false);
+
+        if ok {
+            info!(service = %svc, dns = %dns_ip, "Enabled macOS system DNS");
+            snapshots.push(crate::DnsInterfaceSnapshot {
+                interface: svc,
+                previous_servers,
+            });
+        } else {
+            warn!(service = %svc, "Could not set macOS system DNS (may require elevation)");
+        }
+    }
+    Ok(snapshots)
+}
+
+#[cfg(target_os = "macos")]
+pub fn disable_system_dns(snapshots: &[crate::DnsInterfaceSnapshot]) -> anyhow::Result<()> {
+    if snapshots.is_empty() {
+        for svc in list_active_services().unwrap_or_default() {
+            let _ = Command::new("networksetup")
+                .args(["-setdnsservers", &svc, "empty"])
+                .status();
+            info!(service = %svc, "Reset macOS system DNS to DHCP");
+        }
+        return Ok(());
+    }
+
+    for snap in snapshots {
+        let mut cmd = Command::new("networksetup");
+        cmd.args(["-setdnsservers", &snap.interface]);
+        if snap.previous_servers.is_empty() {
+            cmd.arg("empty");
+        } else {
+            for srv in &snap.previous_servers {
+                cmd.arg(srv);
+            }
+        }
+        let _ = cmd.status();
+        info!(service = %snap.interface, restored = ?snap.previous_servers, "Restored macOS system DNS");
+    }
+    Ok(())
+}

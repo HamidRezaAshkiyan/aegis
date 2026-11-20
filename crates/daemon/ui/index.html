@@ -273,6 +273,12 @@
       </div>
       <div class="form-group">
         <label style="display:flex;align-items:center;gap:8px;cursor:pointer;">
+          <input type="checkbox" id="s-sysdns" />
+          Enable OS System DNS (macOS / Windows — snapshots &amp; auto-restores previous DNS)
+        </label>
+      </div>
+      <div class="form-group">
+        <label style="display:flex;align-items:center;gap:8px;cursor:pointer;">
           <input type="checkbox" id="s-autoupdate" />
           Scheduled Blocklist Auto-Updates (uses ETag / If-Modified-Since)
         </label>
@@ -527,6 +533,7 @@ async function loadSettings() {
   document.getElementById('s-mode').value = s.upstream_mode;
   document.getElementById('s-addr').value = s.upstream_addr || '';
   document.getElementById('s-sysproxy').checked = !!s.system_proxy_enabled;
+  document.getElementById('s-sysdns').checked = !!s.system_dns_enabled;
   document.getElementById('s-autoupdate').checked = s.auto_update_enabled !== false;
   document.getElementById('s-interval').value = s.auto_update_interval_hours || 24;
 }
@@ -543,6 +550,7 @@ async function saveSettings() {
     upstream_username: null,
     upstream_password: null,
     system_proxy_enabled: document.getElementById('s-sysproxy').checked,
+    system_dns_enabled: document.getElementById('s-sysdns').checked,
     auto_update_enabled: document.getElementById('s-autoupdate').checked,
     auto_update_interval_hours: Math.max(1, parseInt(document.getElementById('s-interval').value, 10) || 24),
   };
