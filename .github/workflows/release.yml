@@ -49,7 +49,7 @@ jobs:
       - name: Build release binary
         run: cargo build --release --target ${{ matrix.target }} --bin aegis
 
-      - name: Package macOS archive
+      - name: Package macOS archive & DMG
         if: runner.os == 'macOS'
         shell: bash
         run: |
@@ -57,6 +57,10 @@ jobs:
           cp target/${{ matrix.target }}/release/${{ matrix.bin }} dist/pkg/
           cp README.md LICENSE dist/pkg/
           tar -czf dist/${{ matrix.asset_name }}.tar.gz -C dist/pkg .
+          ARCH_LABEL="${{ matrix.asset_name }}"
+          ARCH_LABEL="${ARCH_LABEL#aegis-macos-}"
+          chmod +x scripts/build-dmg.sh
+          ./scripts/build-dmg.sh "target/${{ matrix.target }}/release/${{ matrix.bin }}" "$ARCH_LABEL" "dist/Aegis-macos-${ARCH_LABEL}.dmg"
 
       - name: Package Windows archive
         if: runner.os == 'Windows'
@@ -79,3 +83,8 @@ jobs:
             gh release create "$TAG" --title "Aegis $TAG" --generate-notes || true
           fi
           gh release upload "$TAG" "$ASSET" --clobber
+          if [[ "${{ runner.os }}" == "macOS" ]]; then
+            ARCH_LABEL="${{ matrix.asset_name }}"
+            ARCH_LABEL="${ARCH_LABEL#aegis-macos-}"
+            gh release upload "$TAG" "dist/Aegis-macos-${ARCH_LABEL}.dmg" --clobber
+          fi
