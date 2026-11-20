@@ -34,6 +34,31 @@ cargo run --release -- --update-lists
 1. **Clash / Sing-box / V2Ray (Proxy Mode)**: Open the **Proxy & VPN** tab in the dashboard, choose **Chain via Upstream SOCKS5 Proxy**, and enter `127.0.0.1:7890` (Clash) or `127.0.0.1:10808` (V2Ray/Sing-box). Point apps or system proxy to Aegis (`127.0.0.1:8080` / `:1080`).
 2. **WireGuard / OpenVPN**: Run Aegis DNS on port `53` (`sudo aegis --dns-addr 127.0.0.1:53`) and set `DNS = 127.0.0.1` in your VPN profile.
 
+## Running with Docker
+
+```bash
+# Build the image
+docker build -t aegis .
+
+# Run as a LAN / Pi-hole DNS & proxy blocker with persistent /data volume
+docker run -d --name aegis --restart unless-stopped \
+  -p 53:53/udp \
+  -p 8080:8080 \
+  -p 1080:1080 \
+  -p 4242:4242 \
+  -v aegis-data:/data \
+  aegis
+```
+
+To enable dashboard password/token auth in Docker, pass `--auth-token`:
+
+```bash
+docker run -d --name aegis --restart unless-stopped \
+  -p 53:53/udp -p 8080:8080 -p 1080:1080 -p 4242:4242 \
+  -v aegis-data:/data \
+  aegis --lan --no-tray --data-dir /data --dns-addr 0.0.0.0:53 --update-lists --auth-token "your-secret-token"
+```
+
 ## Running Tests
 
 ```bash
