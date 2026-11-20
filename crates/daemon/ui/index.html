@@ -1,0 +1,548 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1.0" />
+<title>Aegis — System-Wide Ad &amp; Tracker Blocker</title>
+<style>
+  :root {
+    --bg: #0b0f17;
+    --surface: #131926;
+    --surface-2: #1b2335;
+    --border: #263147;
+    --text: #e6edf7;
+    --muted: #8b9bb4;
+    --accent: #3b82f6;
+    --green: #22c55e;
+    --red: #ef4444;
+    --amber: #f59e0b;
+    --purple: #a855f7;
+    --cyan: #06b6d4;
+  }
+  * { box-sizing: border-box; margin: 0; padding: 0; }
+  body {
+    font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Inter, Roboto, sans-serif;
+    background: var(--bg);
+    color: var(--text);
+    line-height: 1.5;
+    min-height: 100vh;
+  }
+  header {
+    display: flex; align-items: center; justify-content: space-between; flex-wrap: wrap; gap: 12px;
+    padding: 16px 24px; background: var(--surface); border-bottom: 1px solid var(--border);
+  }
+  .brand { display: flex; align-items: center; gap: 10px; font-weight: 700; font-size: 18px; }
+  .shield {
+    width: 30px; height: 30px; border-radius: 8px;
+    background: linear-gradient(135deg, #3b82f6, #06b6d4);
+    display: grid; place-items: center; font-size: 16px;
+  }
+  .status-bar { display: flex; align-items: center; gap: 10px; flex-wrap: wrap; }
+  .pill {
+    display: inline-flex; align-items: center; gap: 6px; padding: 4px 10px;
+    border-radius: 999px; font-size: 12px; font-weight: 600;
+    background: var(--surface-2); border: 1px solid var(--border); color: var(--muted);
+  }
+  .pill.ok { color: var(--green); border-color: rgba(34,197,94,.35); background: rgba(34,197,94,.08); }
+  .pill.paused { color: var(--amber); border-color: rgba(245,158,11,.35); background: rgba(245,158,11,.1); }
+  .dot { width: 8px; height: 8px; border-radius: 50%; background: currentColor; }
+  button {
+    cursor: pointer; border: 1px solid var(--border); background: var(--surface-2);
+    color: var(--text); padding: 6px 12px; border-radius: 8px; font-size: 13px; font-weight: 500;
+    transition: background .15s, border-color .15s;
+  }
+  button:hover { background: #232d44; border-color: #3a4a6b; }
+  button.primary { background: var(--accent); border-color: var(--accent); color: #fff; }
+  button.primary:hover { background: #2563eb; }
+  button.danger { color: var(--red); border-color: rgba(239,68,68,.35); }
+  button.danger:hover { background: rgba(239,68,68,.12); }
+  button.sm { padding: 3px 8px; font-size: 11px; border-radius: 6px; }
+  nav {
+    display: flex; gap: 4px; padding: 12px 24px 0; border-bottom: 1px solid var(--border);
+    background: var(--surface);
+  }
+  nav button {
+    border: none; border-bottom: 2px solid transparent; border-radius: 0;
+    background: transparent; padding: 10px 14px; color: var(--muted);
+  }
+  nav button.active { color: var(--text); border-bottom-color: var(--accent); }
+  main { max-width: 1140px; margin: 24px auto; padding: 0 20px 48px; }
+  .tab { display: none; }
+  .tab.active { display: block; }
+  .grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(210px, 1fr)); gap: 14px; margin-bottom: 20px; }
+  .card {
+    background: var(--surface); border: 1px solid var(--border); border-radius: 12px; padding: 18px;
+  }
+  .card h3 { font-size: 12px; text-transform: uppercase; letter-spacing: .06em; color: var(--muted); margin-bottom: 8px; }
+  .metric { font-size: 30px; font-weight: 700; letter-spacing: -.02em; }
+  .metric.ads { color: var(--red); }
+  .metric.trackers { color: var(--purple); }
+  .metric.telemetry { color: var(--amber); }
+  .metric.rate { color: var(--cyan); }
+  .sub { font-size: 12px; color: var(--muted); margin-top: 4px; }
+  table { width: 100%; border-collapse: collapse; font-size: 13px; }
+  th, td { text-align: left; padding: 10px 12px; border-bottom: 1px solid var(--border); }
+  th { color: var(--muted); font-weight: 600; font-size: 11px; text-transform: uppercase; letter-spacing: .05em; }
+  .badge {
+    display: inline-block; padding: 2px 7px; border-radius: 6px; font-size: 11px; font-weight: 600;
+    background: var(--surface-2); color: var(--muted);
+  }
+  .badge.ad { background: rgba(239,68,68,.15); color: #f87171; }
+  .badge.tracker { background: rgba(168,85,247,.15); color: #c084fc; }
+  .badge.windows_telemetry, .badge.macos_telemetry { background: rgba(245,158,11,.15); color: #fbbf24; }
+  .badge.allow { background: rgba(34,197,94,.12); color: #4ade80; }
+  .badge.custom { background: rgba(6,182,212,.15); color: #22d3ee; }
+  .toolbar { display: flex; gap: 10px; align-items: center; flex-wrap: wrap; margin-bottom: 14px; }
+  input, select {
+    background: var(--surface-2); border: 1px solid var(--border); color: var(--text);
+    padding: 7px 11px; border-radius: 8px; font-size: 13px; outline: none;
+  }
+  input:focus, select:focus { border-color: var(--accent); }
+  .row { display: flex; gap: 10px; flex-wrap: wrap; align-items: center; }
+  .mono { font-family: ui-monospace, SFMono-Regular, Menlo, monospace; font-size: 12px; }
+  .endpoints { display: flex; gap: 8px; flex-wrap: wrap; margin-bottom: 18px; }
+  .form-group { display: flex; flex-direction: column; gap: 6px; margin-bottom: 14px; max-width: 480px; }
+  label { font-size: 12px; color: var(--muted); font-weight: 600; }
+  .toast {
+    position: fixed; bottom: 20px; right: 20px; background: var(--surface-2);
+    border: 1px solid var(--accent); padding: 10px 16px; border-radius: 10px;
+    font-size: 13px; display: none; z-index: 99;
+  }
+</style>
+</head>
+<body>
+<header>
+  <div class="brand">
+    <div class="shield">🛡</div>
+    <span>Aegis</span>
+    <span class="pill" id="rules-pill">0 rules</span>
+  </div>
+  <div class="status-bar">
+    <span class="pill ok" id="status-pill"><span class="dot"></span> Protected</span>
+    <button class="sm" onclick="pauseFor(300)">Pause 5m</button>
+    <button class="sm" onclick="pauseFor(900)">Pause 15m</button>
+    <button class="sm primary" onclick="pauseFor(0)">Resume</button>
+  </div>
+</header>
+
+<nav>
+  <button class="active" onclick="switchTab('overview', this)">Overview</button>
+  <button onclick="switchTab('logs', this)">Live Log</button>
+  <button onclick="switchTab('lists', this)">Blocklists</button>
+  <button onclick="switchTab('rules', this)">Custom Rules</button>
+  <button onclick="switchTab('settings', this)">Proxy &amp; VPN</button>
+</nav>
+
+<main>
+  <!-- OVERVIEW -->
+  <section id="tab-overview" class="tab active">
+    <div class="endpoints" id="endpoints-bar"></div>
+    <div class="grid">
+      <div class="card">
+        <h3>Ads Blocked</h3>
+        <div class="metric ads" id="m-ads">0</div>
+        <div class="sub">Ad networks &amp; banners</div>
+      </div>
+      <div class="card">
+        <h3>Trackers Blocked</h3>
+        <div class="metric trackers" id="m-trackers">0</div>
+        <div class="sub">Analytics &amp; app trackers</div>
+      </div>
+      <div class="card">
+        <h3>OS Telemetry Blocked</h3>
+        <div class="metric telemetry" id="m-telemetry">0</div>
+        <div class="sub" id="m-telemetry-sub">Windows: 0 · macOS: 0</div>
+      </div>
+      <div class="card">
+        <h3>Block Rate</h3>
+        <div class="metric rate" id="m-rate">0%</div>
+        <div class="sub" id="m-total">0 / 0 requests blocked</div>
+      </div>
+    </div>
+
+    <div class="card">
+      <div class="toolbar" style="justify-content: space-between;">
+        <h3 style="margin:0;">Top Blocked Domains</h3>
+        <button class="sm danger" onclick="resetStats()">Reset Counters</button>
+      </div>
+      <table>
+        <thead><tr><th>Domain</th><th>Category</th><th>Blocked Count</th></tr></thead>
+        <tbody id="top-domains-body"><tr><td colspan="3" style="color:var(--muted)">No blocked domains yet.</td></tr></tbody>
+      </table>
+    </div>
+  </section>
+
+  <!-- LIVE LOG -->
+  <section id="tab-logs" class="tab">
+    <div class="card">
+      <div class="toolbar">
+        <input id="log-search" type="text" placeholder="Filter domain..." oninput="renderLogs()" style="flex:1;min-width:200px;" />
+        <select id="log-filter" onchange="renderLogs()">
+          <option value="all">All Traffic</option>
+          <option value="block">Blocked Only</option>
+          <option value="allow">Allowed Only</option>
+        </select>
+      </div>
+      <table>
+        <thead><tr><th>Time</th><th>Proto</th><th>Domain</th><th>Status</th><th>Action</th></tr></thead>
+        <tbody id="logs-body"></tbody>
+      </table>
+    </div>
+  </section>
+
+  <!-- BLOCKLISTS -->
+  <section id="tab-lists" class="tab">
+    <div class="card" style="margin-bottom:16px;">
+      <div class="toolbar" style="justify-content:space-between;">
+        <h3 style="margin:0;">Subscribed Filter Lists</h3>
+        <button class="primary" id="btn-update-lists" onclick="updateAllLists()">Update All Lists</button>
+      </div>
+      <table>
+        <thead><tr><th>Enabled</th><th>Name</th><th>Category</th><th>Rules</th><th></th></tr></thead>
+        <tbody id="lists-body"></tbody>
+      </table>
+    </div>
+    <div class="card">
+      <h3>Add Custom Blocklist</h3>
+      <div class="row">
+        <input id="new-list-name" placeholder="List Name" />
+        <input id="new-list-url" placeholder="https://.../list.txt" style="flex:1;min-width:260px;" />
+        <select id="new-list-cat">
+          <option value="ad">Ads</option>
+          <option value="tracker">Trackers</option>
+          <option value="windows_telemetry">Windows Telemetry</option>
+          <option value="macos_telemetry">macOS Telemetry</option>
+          <option value="malware">Malware</option>
+        </select>
+        <button class="primary" onclick="addList()">Add List</button>
+      </div>
+    </div>
+  </section>
+
+  <!-- CUSTOM RULES -->
+  <section id="tab-rules" class="tab">
+    <div class="grid">
+      <div class="card">
+        <h3>Custom Denylist (Always Block)</h3>
+        <div class="row" style="margin-bottom:12px;">
+          <input id="deny-input" placeholder="ads.example.com" style="flex:1;" />
+          <button class="danger" onclick="addRule('deny')">Block</button>
+        </div>
+        <div id="denylist-items"></div>
+      </div>
+      <div class="card">
+        <h3>Custom Allowlist (Always Allow)</h3>
+        <div class="row" style="margin-bottom:12px;">
+          <input id="allow-input" placeholder="safe.example.com" style="flex:1;" />
+          <button class="primary" onclick="addRule('allow')">Allow</button>
+        </div>
+        <div id="allowlist-items"></div>
+      </div>
+    </div>
+  </section>
+
+  <!-- PROXY & VPN SETTINGS -->
+  <section id="tab-settings" class="tab">
+    <div class="card">
+      <h3>Upstream Proxy / VPN Chaining</h3>
+      <p style="color:var(--muted);font-size:13px;margin-bottom:16px;">
+        Forward allowed HTTP &amp; SOCKS5 traffic directly to the internet, or chain into your local proxy manager (Clash, Sing-box, V2Ray, Nekoray).
+      </p>
+      <div class="row" style="margin-bottom:16px;">
+        <button class="sm" onclick="presetUpstream('direct','')">Direct Internet</button>
+        <button class="sm" onclick="presetUpstream('socks5','127.0.0.1:7890')">Preset: Clash (127.0.0.1:7890)</button>
+        <button class="sm" onclick="presetUpstream('socks5','127.0.0.1:10808')">Preset: V2Ray / Sing-box (127.0.0.1:10808)</button>
+      </div>
+      <div class="form-group">
+        <label>Outbound Mode</label>
+        <select id="s-mode">
+          <option value="direct">Direct (No Upstream Proxy)</option>
+          <option value="socks5">Chain via Upstream SOCKS5 Proxy</option>
+          <option value="http">Chain via Upstream HTTP Proxy</option>
+        </select>
+      </div>
+      <div class="form-group">
+        <label>Upstream Proxy Address (host:port)</label>
+        <input id="s-addr" placeholder="127.0.0.1:7890" />
+      </div>
+      <div class="form-group">
+        <label style="display:flex;align-items:center;gap:8px;cursor:pointer;">
+          <input type="checkbox" id="s-sysproxy" />
+          Enable OS System Proxy (macOS / Windows — auto-restores on exit)
+        </label>
+      </div>
+      <button class="primary" onclick="saveSettings()">Save &amp; Apply Live</button>
+    </div>
+  </section>
+</main>
+
+<div class="toast" id="toast"></div>
+
+<script>
+let logs = [];
+
+function toast(msg) {
+  const el = document.getElementById('toast');
+  el.textContent = msg;
+  el.style.display = 'block';
+  setTimeout(() => { el.style.display = 'none'; }, 2600);
+}
+
+function switchTab(id, btn) {
+  document.querySelectorAll('.tab').forEach(t => t.classList.remove('active'));
+  document.querySelectorAll('nav button').forEach(b => b.classList.remove('active'));
+  document.getElementById('tab-' + id).classList.add('active');
+  btn.classList.add('active');
+  if (id === 'lists') loadLists();
+  if (id === 'rules') loadRules();
+  if (id === 'settings') loadSettings();
+}
+
+async function loadStatus() {
+  const s = await (await fetch('/api/status')).json();
+  document.getElementById('rules-pill').textContent = s.active_rules.toLocaleString() + ' rules';
+  const pill = document.getElementById('status-pill');
+  if (s.paused_until) {
+    pill.className = 'pill paused';
+    pill.innerHTML = '<span class="dot"></span> Paused';
+  } else {
+    pill.className = 'pill ok';
+    pill.innerHTML = '<span class="dot"></span> Protected';
+  }
+  const chain = s.upstream_mode === 'direct' ? 'Direct' : `${s.upstream_mode.toUpperCase()} → ${s.upstream_addr}`;
+  document.getElementById('endpoints-bar').innerHTML = `
+    <span class="pill mono">DNS: ${s.dns_listen}</span>
+    <span class="pill mono">HTTP Proxy: ${s.http_proxy_listen}</span>
+    <span class="pill mono">SOCKS5 Proxy: ${s.socks5_proxy_listen}</span>
+    <span class="pill mono">Outbound: ${chain}</span>
+  `;
+}
+
+async function loadStats() {
+  const st = await (await fetch('/api/stats')).json();
+  document.getElementById('m-ads').textContent = st.ads_blocked.toLocaleString();
+  document.getElementById('m-trackers').textContent = st.trackers_blocked.toLocaleString();
+  const osTel = st.windows_telemetry_blocked + st.macos_telemetry_blocked;
+  document.getElementById('m-telemetry').textContent = osTel.toLocaleString();
+  document.getElementById('m-telemetry-sub').textContent =
+    `Windows: ${st.windows_telemetry_blocked} · macOS: ${st.macos_telemetry_blocked}`;
+  document.getElementById('m-rate').textContent = st.block_rate_percent.toFixed(1) + '%';
+  document.getElementById('m-total').textContent =
+    `${st.total_blocked.toLocaleString()} / ${st.total_requests.toLocaleString()} requests blocked`;
+
+  const tbody = document.getElementById('top-domains-body');
+  if (!st.top_blocked_domains.length) {
+    tbody.innerHTML = '<tr><td colspan="3" style="color:var(--muted)">No blocked domains yet.</td></tr>';
+  } else {
+    tbody.innerHTML = st.top_blocked_domains.map(d => `
+      <tr>
+        <td class="mono">${escapeHtml(d.domain)}</td>
+        <td><span class="badge ${d.category}">${d.category}</span></td>
+        <td>${d.count.toLocaleString()}</td>
+      </tr>
+    `).join('');
+  }
+}
+
+async function loadLogs() {
+  logs = await (await fetch('/api/logs')).json();
+  renderLogs();
+}
+
+function renderLogs() {
+  const q = document.getElementById('log-search').value.trim().toLowerCase();
+  const mode = document.getElementById('log-filter').value;
+  const filtered = logs.filter(e => {
+    if (q && !e.domain.toLowerCase().includes(q)) return false;
+    if (mode !== 'all' && e.decision.action !== mode) return false;
+    return true;
+  }).slice(0, 120);
+
+  document.getElementById('logs-body').innerHTML = filtered.map(e => {
+    const t = new Date(e.timestamp).toLocaleTimeString();
+    const isBlock = e.decision.action === 'block';
+    const badge = isBlock
+      ? `<span class="badge ${e.decision.category}">Blocked (${e.decision.category})</span>`
+      : `<span class="badge allow">Allowed</span>`;
+    const btn = isBlock
+      ? `<button class="sm" onclick="quickRule('allow','${escapeHtml(e.domain)}')">Allow</button>`
+      : `<button class="sm danger" onclick="quickRule('deny','${escapeHtml(e.domain)}')">Block</button>`;
+    return `<tr>
+      <td class="mono" style="color:var(--muted)">${t}</td>
+      <td><span class="badge">${e.protocol.toUpperCase()}</span></td>
+      <td class="mono">${escapeHtml(e.domain)}</td>
+      <td>${badge}</td>
+      <td>${btn}</td>
+    </tr>`;
+  }).join('');
+}
+
+async function quickRule(kind, domain) {
+  await fetch('/api/rules/' + kind, {
+    method: 'POST', headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ domain })
+  });
+  toast(`${kind === 'allow' ? 'Allowed' : 'Blocked'} ${domain}`);
+  loadStatus();
+}
+
+async function pauseFor(seconds) {
+  await fetch('/api/pause', {
+    method: 'POST', headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ seconds })
+  });
+  toast(seconds > 0 ? `Paused for ${seconds/60} minutes` : 'Protection resumed');
+  loadStatus();
+}
+
+async function resetStats() {
+  await fetch('/api/stats/reset', { method: 'POST' });
+  logs = [];
+  renderLogs();
+  loadStats();
+  toast('Statistics reset');
+}
+
+async function loadLists() {
+  const lists = await (await fetch('/api/lists')).json();
+  document.getElementById('lists-body').innerHTML = lists.map(l => `
+    <tr>
+      <td><input type="checkbox" ${l.enabled ? 'checked' : ''} onchange="toggleList('${l.id}', this.checked)" /></td>
+      <td><strong>${escapeHtml(l.name)}</strong><div class="mono" style="color:var(--muted);font-size:11px;">${escapeHtml(l.url)}</div></td>
+      <td><span class="badge ${l.category}">${l.category}</span></td>
+      <td>${l.rule_count.toLocaleString()}</td>
+      <td><button class="sm danger" onclick="deleteList('${l.id}')">Remove</button></td>
+    </tr>
+  `).join('');
+}
+
+async function toggleList(id, enabled) {
+  await fetch('/api/lists/' + encodeURIComponent(id), {
+    method: 'PATCH', headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ enabled })
+  });
+  loadStatus();
+}
+
+async function deleteList(id) {
+  await fetch('/api/lists/' + encodeURIComponent(id), { method: 'DELETE' });
+  loadLists(); loadStatus();
+}
+
+async function addList() {
+  const name = document.getElementById('new-list-name').value.trim();
+  const url = document.getElementById('new-list-url').value.trim();
+  const category = document.getElementById('new-list-cat').value;
+  if (!name || !url) return;
+  await fetch('/api/lists', {
+    method: 'POST', headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ name, url, category })
+  });
+  document.getElementById('new-list-name').value = '';
+  document.getElementById('new-list-url').value = '';
+  loadLists();
+  toast('List added — click Update All Lists to download');
+}
+
+async function updateAllLists() {
+  const btn = document.getElementById('btn-update-lists');
+  btn.disabled = true; btn.textContent = 'Updating...';
+  try {
+    const res = await (await fetch('/api/lists/update', { method: 'POST' })).json();
+    toast(`Updated ${res.updated_lists} lists (${res.active_rules.toLocaleString()} rules active)`);
+    loadLists(); loadStatus();
+  } finally {
+    btn.disabled = false; btn.textContent = 'Update All Lists';
+  }
+}
+
+async function loadRules() {
+  const r = await (await fetch('/api/rules')).json();
+  document.getElementById('denylist-items').innerHTML = r.denylist.map(d =>
+    `<div class="row" style="justify-content:space-between;padding:6px 0;border-bottom:1px solid var(--border);">
+      <span class="mono">${escapeHtml(d)}</span>
+      <button class="sm" onclick="removeRule('${escapeHtml(d)}')">Remove</button>
+    </div>`
+  ).join('') || '<div style="color:var(--muted);font-size:13px;">None</div>';
+  document.getElementById('allowlist-items').innerHTML = r.allowlist.map(d =>
+    `<div class="row" style="justify-content:space-between;padding:6px 0;border-bottom:1px solid var(--border);">
+      <span class="mono">${escapeHtml(d)}</span>
+      <button class="sm" onclick="removeRule('${escapeHtml(d)}')">Remove</button>
+    </div>`
+  ).join('') || '<div style="color:var(--muted);font-size:13px;">None</div>';
+}
+
+async function addRule(kind) {
+  const input = document.getElementById(kind === 'deny' ? 'deny-input' : 'allow-input');
+  const domain = input.value.trim();
+  if (!domain) return;
+  await quickRule(kind, domain);
+  input.value = '';
+  loadRules();
+}
+
+async function removeRule(domain) {
+  await fetch('/api/rules', {
+    method: 'DELETE', headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ domain })
+  });
+  loadRules(); loadStatus();
+}
+
+async function loadSettings() {
+  const s = await (await fetch('/api/settings')).json();
+  document.getElementById('s-mode').value = s.upstream_mode;
+  document.getElementById('s-addr').value = s.upstream_addr || '';
+  document.getElementById('s-sysproxy').checked = !!s.system_proxy_enabled;
+}
+
+function presetUpstream(mode, addr) {
+  document.getElementById('s-mode').value = mode;
+  document.getElementById('s-addr').value = addr;
+}
+
+async function saveSettings() {
+  const payload = {
+    upstream_mode: document.getElementById('s-mode').value,
+    upstream_addr: document.getElementById('s-addr').value.trim(),
+    upstream_username: null,
+    upstream_password: null,
+    system_proxy_enabled: document.getElementById('s-sysproxy').checked,
+  };
+  const resp = await fetch('/api/settings', {
+    method: 'PUT', headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify(payload)
+  });
+  if (resp.ok) {
+    toast('Settings saved & applied live');
+    loadStatus();
+  } else {
+    toast('Error saving settings');
+  }
+}
+
+function escapeHtml(s) {
+  return String(s).replace(/[&<>"']/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
+}
+
+function connectWs() {
+  const proto = location.protocol === 'https:' ? 'wss:' : 'ws:';
+  const ws = new WebSocket(`${proto}//${location.host}/api/logs/ws`);
+  ws.onmessage = (ev) => {
+    const item = JSON.parse(ev.data);
+    logs.unshift(item);
+    if (logs.length > 300) logs.pop();
+    renderLogs();
+    loadStats();
+  };
+  ws.onclose = () => setTimeout(connectWs, 2000);
+}
+
+loadStatus();
+loadStats();
+loadLogs();
+connectWs();
+setInterval(loadStats, 5000);
+</script>
+</body>
+</html>

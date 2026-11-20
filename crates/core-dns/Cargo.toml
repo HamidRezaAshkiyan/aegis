@@ -1,0 +1,15 @@
+[package]
+name = "core-dns"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+
+[dependencies]
+core-engine = { path = "../core-engine" }
+core-stats = { path = "../core-stats" }
+tokio.workspace = true
+hickory-proto.workspace = true
+reqwest.workspace = true
+chrono.workspace = true
+anyhow.workspace = true
+tracing.workspace = true

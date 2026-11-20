@@ -1,0 +1,59 @@
+pub mod events;
+pub mod store;
+
+pub use events::{DomainCount, StatsSummary, TrafficEvent, TrafficProtocol};
+pub use store::StatsStore;
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use chrono::Utc;
+    use core_engine::{BlockCategory, FilterDecision};
+
+    #[test]
+    fn records_and_aggregates_stats() {
+        let store = StatsStore::in_memory().unwrap();
+
+        store.record(TrafficEvent {
+            timestamp: Utc::now(),
+            protocol: TrafficProtocol::Dns,
+            domain: "doubleclick.net".to_string(),
+            client: "127.0.0.1".to_string(),
+            decision: FilterDecision::Block {
+                category: BlockCategory::Ad,
+                matched_rule: "doubleclick.net".to_string(),
+                list_name: "Built-in".to_string(),
+            },
+            latency_ms: 1,
+        });
+
+        store.record(TrafficEvent {
+            timestamp: Utc::now(),
+            protocol: TrafficProtocol::Socks5,
+            domain: "vortex.data.microsoft.com".to_string(),
+            client: "127.0.0.1".to_string(),
+            decision: FilterDecision::Block {
+                category: BlockCategory::WindowsTelemetry,
+                matched_rule: "vortex.data.microsoft.com".to_string(),
+                list_name: "Windows".to_string(),
+            },
+            latency_ms: 2,
+        });
+
+        store.record(TrafficEvent {
+            timestamp: Utc::now(),
+            protocol: TrafficProtocol::Https,
+            domain: "github.com".to_string(),
+            client: "127.0.0.1".to_string(),
+            decision: FilterDecision::Allow,
+            latency_ms: 15,
+        });
+
+        let summary = store.summary();
+        assert_eq!(summary.total_requests, 3);
+        assert_eq!(summary.total_blocked, 2);
+        assert_eq!(summary.ads_blocked, 1);
+        assert_eq!(summary.windows_telemetry_blocked, 1);
+        assert_eq!(store.recent_logs(10).len(), 3);
+    }
+}
