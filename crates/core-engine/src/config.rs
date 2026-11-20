@@ -111,6 +111,18 @@ pub struct FilterListConfig {
     pub rule_count: usize,
     #[serde(default)]
     pub last_updated: Option<String>,
+    #[serde(default)]
+    pub etag: Option<String>,
+    #[serde(default)]
+    pub last_modified: Option<String>,
+}
+
+fn default_auto_update_enabled() -> bool {
+    true
+}
+
+fn default_auto_update_interval_hours() -> u64 {
+    24
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -129,6 +141,10 @@ pub struct AegisConfig {
     pub denylist: Vec<String>,
     #[serde(default)]
     pub system_proxy_enabled: bool,
+    #[serde(default = "default_auto_update_enabled")]
+    pub auto_update_enabled: bool,
+    #[serde(default = "default_auto_update_interval_hours")]
+    pub auto_update_interval_hours: u64,
 }
 
 pub fn default_filter_lists() -> Vec<FilterListConfig> {
@@ -142,6 +158,8 @@ pub fn default_filter_lists() -> Vec<FilterListConfig> {
             enabled: true,
             rule_count: 0,
             last_updated: None,
+            etag: None,
+            last_modified: None,
         },
         FilterListConfig {
             id: "hagezi-windows".to_string(),
@@ -152,6 +170,8 @@ pub fn default_filter_lists() -> Vec<FilterListConfig> {
             enabled: true,
             rule_count: 0,
             last_updated: None,
+            etag: None,
+            last_modified: None,
         },
         FilterListConfig {
             id: "hagezi-apple".to_string(),
@@ -162,6 +182,8 @@ pub fn default_filter_lists() -> Vec<FilterListConfig> {
             enabled: true,
             rule_count: 0,
             last_updated: None,
+            etag: None,
+            last_modified: None,
         },
         FilterListConfig {
             id: "adguard-dns".to_string(),
@@ -171,6 +193,8 @@ pub fn default_filter_lists() -> Vec<FilterListConfig> {
             enabled: false,
             rule_count: 0,
             last_updated: None,
+            etag: None,
+            last_modified: None,
         },
         FilterListConfig {
             id: "easyprivacy".to_string(),
@@ -180,6 +204,8 @@ pub fn default_filter_lists() -> Vec<FilterListConfig> {
             enabled: true,
             rule_count: 0,
             last_updated: None,
+            etag: None,
+            last_modified: None,
         },
     ]
 }
@@ -194,6 +220,8 @@ impl Default for AegisConfig {
             allowlist: Vec::new(),
             denylist: Vec::new(),
             system_proxy_enabled: false,
+            auto_update_enabled: default_auto_update_enabled(),
+            auto_update_interval_hours: default_auto_update_interval_hours(),
         }
     }
 }
