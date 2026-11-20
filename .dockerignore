@@ -1,0 +1,12 @@
+.git
+.gitignore
+.github
+target
+dist
+scripts
+*.dmg
+*.tar.gz
+*.zip
+*.exe
+.DS_Store
+.aegis-data
