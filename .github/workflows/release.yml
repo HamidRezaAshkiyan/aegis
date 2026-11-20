@@ -62,12 +62,13 @@ jobs:
           chmod +x scripts/build-dmg.sh
           ./scripts/build-dmg.sh "target/${{ matrix.target }}/release/${{ matrix.bin }}" "$ARCH_LABEL" "dist/Aegis-macos-${ARCH_LABEL}.dmg"
 
-      - name: Package Windows archive
+      - name: Package Windows archive & standalone EXE
         if: runner.os == 'Windows'
         shell: pwsh
         run: |
           New-Item -ItemType Directory -Force -Path dist/pkg | Out-Null
           Copy-Item target/${{ matrix.target }}/release/${{ matrix.bin }} dist/pkg/
+          Copy-Item target/${{ matrix.target }}/release/${{ matrix.bin }} dist/Aegis-windows-x86_64.exe
           Copy-Item README.md, LICENSE dist/pkg/
           Compress-Archive -Path dist/pkg/* -DestinationPath dist/${{ matrix.asset_name }}.zip -Force
 
@@ -87,4 +88,7 @@ jobs:
             ARCH_LABEL="${{ matrix.asset_name }}"
             ARCH_LABEL="${ARCH_LABEL#aegis-macos-}"
             gh release upload "$TAG" "dist/Aegis-macos-${ARCH_LABEL}.dmg" --clobber
+          fi
+          if [[ "${{ runner.os }}" == "Windows" ]]; then
+            gh release upload "$TAG" "dist/Aegis-windows-x86_64.exe" --clobber
           fi
