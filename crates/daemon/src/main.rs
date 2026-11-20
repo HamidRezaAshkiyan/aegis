@@ -169,7 +169,7 @@ async fn main() -> anyhow::Result<()> {
         }
     }
 
-    // 4. Enable OS System Proxy if configured
+    // 4. Enable OS System Proxy & System DNS if configured
     if config.system_proxy_enabled {
         if let Err(e) = core_os::enable_system_proxy(
             &data_dir,
@@ -177,6 +177,11 @@ async fn main() -> anyhow::Result<()> {
             &config.proxy.socks5_listen,
         ) {
             warn!(error = %e, "Failed to enable system proxy on startup");
+        }
+    }
+    if config.system_dns_enabled {
+        if let Err(e) = core_os::enable_system_dns(&data_dir, &config.dns.listen_addr) {
+            warn!(error = %e, "Failed to enable system DNS on startup");
         }
     }
 
@@ -247,8 +252,9 @@ async fn main() -> anyhow::Result<()> {
         .with_graceful_shutdown(shutdown_signal)
         .await?;
 
-    // Always cleanly restore OS proxy settings on exit
+    // Always cleanly restore OS proxy & DNS settings on exit
     let _ = core_os::disable_system_proxy(&data_dir);
+    let _ = core_os::disable_system_dns(&data_dir);
     info!("Aegis stopped cleanly");
     Ok(())
 }

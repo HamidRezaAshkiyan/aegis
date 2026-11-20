@@ -81,6 +81,7 @@ struct StatusResponse {
     upstream_mode: UpstreamMode,
     upstream_addr: String,
     system_proxy_enabled: bool,
+    system_dns_enabled: bool,
 }
 
 async fn get_status(State(state): State<Arc<AppState>>) -> Json<StatusResponse> {
@@ -96,6 +97,7 @@ async fn get_status(State(state): State<Arc<AppState>>) -> Json<StatusResponse> 
         upstream_mode: cfg.proxy.upstream_mode,
         upstream_addr: cfg.proxy.upstream_addr,
         system_proxy_enabled: cfg.system_proxy_enabled,
+        system_dns_enabled: cfg.system_dns_enabled,
     })
 }
 
@@ -397,6 +399,8 @@ struct SettingsPayload {
     upstream_username: Option<String>,
     upstream_password: Option<String>,
     system_proxy_enabled: bool,
+    #[serde(default)]
+    system_dns_enabled: bool,
     #[serde(default = "default_true")]
     auto_update_enabled: bool,
     #[serde(default = "default_interval_hours")]
@@ -419,6 +423,7 @@ async fn get_settings(State(state): State<Arc<AppState>>) -> Json<SettingsPayloa
         upstream_username: cfg.proxy.upstream_username.clone(),
         upstream_password: cfg.proxy.upstream_password.clone(),
         system_proxy_enabled: cfg.system_proxy_enabled,
+        system_dns_enabled: cfg.system_dns_enabled,
         auto_update_enabled: cfg.auto_update_enabled,
         auto_update_interval_hours: cfg.auto_update_interval_hours,
     })
@@ -429,20 +434,24 @@ async fn update_settings(
     Json(req): Json<SettingsPayload>,
 ) -> impl IntoResponse {
     let interval_hours = req.auto_update_interval_hours.clamp(1, 168);
-    let (http_listen, socks_listen, prev_sys_proxy) = {
+    let (http_listen, socks_listen, dns_listen, prev_sys_proxy, prev_sys_dns) = {
         let mut cfg = state.config.write().unwrap();
-        let prev = cfg.system_proxy_enabled;
+        let prev_proxy = cfg.system_proxy_enabled;
+        let prev_dns = cfg.system_dns_enabled;
         cfg.proxy.upstream_mode = req.upstream_mode.clone();
         cfg.proxy.upstream_addr = req.upstream_addr.clone();
         cfg.proxy.upstream_username = req.upstream_username.clone();
         cfg.proxy.upstream_password = req.upstream_password.clone();
         cfg.system_proxy_enabled = req.system_proxy_enabled;
+        cfg.system_dns_enabled = req.system_dns_enabled;
         cfg.auto_update_enabled = req.auto_update_enabled;
         cfg.auto_update_interval_hours = interval_hours;
         (
             cfg.proxy.http_listen.clone(),
             cfg.proxy.socks5_listen.clone(),
-            prev,
+            cfg.dns.listen_addr.clone(),
+            prev_proxy,
+            prev_dns,
         )
     };
 
@@ -463,6 +472,23 @@ async fn update_settings(
         };
         if let Err(e) = res {
             warn!(error = %e, "Failed to update OS system proxy");
+            return (
+                StatusCode::INTERNAL_SERVER_ERROR,
+                Json(serde_json::json!({ "error": e.to_string() })),
+            )
+                .into_response();
+        }
+    }
+
+    // Toggle OS system DNS if changed
+    if req.system_dns_enabled != prev_sys_dns {
+        let res = if req.system_dns_enabled {
+            core_os::enable_system_dns(&state.data_dir, &dns_listen)
+        } else {
+            core_os::disable_system_dns(&state.data_dir)
+        };
+        if let Err(e) = res {
+            warn!(error = %e, "Failed to update OS system DNS");
             return (
                 StatusCode::INTERNAL_SERVER_ERROR,
                 Json(serde_json::json!({ "error": e.to_string() })),

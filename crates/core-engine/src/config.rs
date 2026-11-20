@@ -141,6 +141,8 @@ pub struct AegisConfig {
     pub denylist: Vec<String>,
     #[serde(default)]
     pub system_proxy_enabled: bool,
+    #[serde(default)]
+    pub system_dns_enabled: bool,
     #[serde(default = "default_auto_update_enabled")]
     pub auto_update_enabled: bool,
     #[serde(default = "default_auto_update_interval_hours")]
@@ -220,6 +222,7 @@ impl Default for AegisConfig {
             allowlist: Vec::new(),
             denylist: Vec::new(),
             system_proxy_enabled: false,
+            system_dns_enabled: false,
             auto_update_enabled: default_auto_update_enabled(),
             auto_update_interval_hours: default_auto_update_interval_hours(),
         }
