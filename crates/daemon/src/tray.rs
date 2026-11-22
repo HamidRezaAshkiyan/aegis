@@ -93,6 +93,7 @@ pub fn run_tray_loop(ctx: TrayContext) -> anyhow::Result<()> {
     let item_pause_60 = MenuItem::new("Pause 1 hour", true, None);
     let item_resume = MenuItem::new("Resume Protection", true, None);
     let item_sys_proxy = CheckMenuItem::new("System Proxy", true, initial_sys_proxy, None);
+    let item_version = MenuItem::new(format!("Aegis v{}", env!("CARGO_PKG_VERSION")), false, None);
     let item_quit = MenuItem::new("Quit Aegis", true, None);
 
     let menu = Menu::new();
@@ -106,11 +107,12 @@ pub fn run_tray_loop(ctx: TrayContext) -> anyhow::Result<()> {
     menu.append(&PredefinedMenuItem::separator())?;
     menu.append(&item_sys_proxy)?;
     menu.append(&PredefinedMenuItem::separator())?;
+    menu.append(&item_version)?;
     menu.append(&item_quit)?;
 
     let tray_icon = TrayIconBuilder::new()
         .with_menu(Box::new(menu))
-        .with_tooltip("Aegis — Ad & Tracker Blocker")
+        .with_tooltip(format!("Aegis v{} — Ad & Tracker Blocker", env!("CARGO_PKG_VERSION")))
         .with_icon(icon)
         .build()?;
 

@@ -124,6 +124,7 @@
   <div class="brand">
     <div class="shield">🛡</div>
     <span>Aegis</span>
+    <span class="pill mono" id="version-pill"></span>
     <span class="pill" id="rules-pill">0 rules</span>
   </div>
   <div class="status-bar">
@@ -446,6 +447,9 @@ async function loadStatus() {
   const resp = await apiFetch('/api/status');
   if (!resp.ok) return;
   const s = await resp.json();
+  if (s.version) {
+    document.getElementById('version-pill').textContent = 'v' + s.version;
+  }
   document.getElementById('rules-pill').textContent = s.active_rules.toLocaleString() + ' rules';
   const pill = document.getElementById('status-pill');
   if (s.paused_until) {
