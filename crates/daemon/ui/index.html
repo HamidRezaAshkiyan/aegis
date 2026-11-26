@@ -782,27 +782,35 @@
             Built-in Offline Baseline Rules
           </label>
         </div>
-        <p class="card-desc">Choose a preset to instantly tune how aggressively Aegis blocks. <strong>Balanced</strong> uses HaGeZi Multi Normal for near-zero false positives.</p>
+        <p class="card-desc">Choose a preset or toggle individual filter lists below. <strong>Balanced</strong> enables AdGuard DNS, PersianBlocker, Windows &amp; macOS Telemetry, and Malware protection.</p>
         <div class="grid-3">
           <div class="profile-card" onclick="applyProfile('minimal')">
             <div class="row" style="justify-content:space-between;"><strong>Minimal (Safest)</strong><span class="badge allow">Zero Breakage</span></div>
-            <div class="field-hint">Built-in ad baseline + Malware/Phishing protection only. Ideal if sites were breaking.</div>
+            <div class="field-hint">AdGuard DNS + Malware/Phishing protection only. Ideal if you want lightweight filtering.</div>
           </div>
           <div class="profile-card recommended" onclick="applyProfile('balanced')">
-            <div class="row" style="justify-content:space-between;"><strong>Balanced</strong><span class="badge custom">Recommended</span></div>
-            <div class="field-hint">HaGeZi Multi Normal + Threat Intelligence Mini. Daily-driver ad &amp; tracker blocking.</div>
+            <div class="row" style="justify-content:space-between;"><strong>Balanced (Default)</strong><span class="badge custom">Recommended</span></div>
+            <div class="field-hint">AdGuard DNS, PersianBlocker, Windows &amp; Apple Telemetry, and Malware protection.</div>
           </div>
           <div class="profile-card" onclick="applyProfile('strict')">
-            <div class="row" style="justify-content:space-between;"><strong>Strict + Telemetry</strong><span class="badge windows_telemetry">Aggressive</span></div>
-            <div class="field-hint">HaGeZi Multi PRO + Malware + Windows &amp; Apple OS telemetry lists.</div>
+            <div class="row" style="justify-content:space-between;"><strong>Strict</strong><span class="badge windows_telemetry">Maximum</span></div>
+            <div class="field-hint">Balanced + HaGeZi Multi PRO + OISD Small for maximum ad &amp; tracker blocking.</div>
           </div>
         </div>
       </div>
 
       <div class="card">
         <div class="card-header">
-          <div class="card-title">Subscribed Filter Lists</div>
+          <div class="card-title">Filter Lists (Toggle Any List On / Off)</div>
           <button class="primary sm" id="btn-update-lists" onclick="updateAllLists()">Update All Enabled Lists</button>
+        </div>
+        <div class="subtabs" id="list-cat-filters">
+          <button class="sm active" onclick="filterListsByCat('all', this)">All</button>
+          <button class="sm" onclick="filterListsByCat('ad', this)">Ads</button>
+          <button class="sm" onclick="filterListsByCat('tracker', this)">Trackers</button>
+          <button class="sm" onclick="filterListsByCat('windows_telemetry', this)">Windows</button>
+          <button class="sm" onclick="filterListsByCat('macos_telemetry', this)">macOS</button>
+          <button class="sm" onclick="filterListsByCat('malware', this)">Malware</button>
         </div>
         <div class="table-wrap">
           <table>
@@ -1568,13 +1576,34 @@ async function applyProfile(name) {
   loadStatus();
 }
 
+let cachedLists = [];
+let listCatFilter = 'all';
+
+function filterListsByCat(cat, btn) {
+  listCatFilter = cat;
+  document.querySelectorAll('#list-cat-filters button').forEach(b => b.classList.remove('active'));
+  if (btn) btn.classList.add('active');
+  renderLists();
+}
+
 async function loadLists() {
   const resp = await apiFetch('/api/lists');
   if (!resp.ok) return;
-  const lists = await resp.json();
-  document.getElementById('lists-body').innerHTML = lists.map(l => `
+  cachedLists = await resp.json();
+  renderLists();
+}
+
+function renderLists() {
+  const items = listCatFilter === 'all'
+    ? cachedLists
+    : cachedLists.filter(l => l.category === listCatFilter);
+  if (!items.length) {
+    document.getElementById('lists-body').innerHTML = '<tr><td colspan="6" style="color:var(--muted)">No filter lists in this category.</td></tr>';
+    return;
+  }
+  document.getElementById('lists-body').innerHTML = items.map(l => `
     <tr>
-      <td><label class="switch"><input type="checkbox" ${l.enabled ? 'checked' : ''} onchange="toggleList('${esc(l.id)}', this.checked)" /><span class="slider"></span></label></td>
+      <td><label class="switch"><input type="checkbox" ${l.enabled ? 'checked' : ''} onchange="toggleList('${esc(l.id)}', this.checked, this)" /><span class="slider"></span></label></td>
       <td><strong>${esc(l.name)}</strong><div class="field-hint mono" style="max-width:360px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;">${esc(l.url)}</div></td>
       <td><span class="badge ${esc(l.category)}">${esc(l.category)}</span></td>
       <td class="mono">${(l.rule_count || 0).toLocaleString()}</td>
@@ -1584,14 +1613,21 @@ async function loadLists() {
   `).join('');
 }
 
-async function toggleList(id, enabled) {
-  const res = await (await apiFetch('/api/lists/' + encodeURIComponent(id), {
-    method: 'PATCH',
-    headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify({ enabled })
-  })).json();
-  toast(`List ${enabled ? 'enabled' : 'disabled'} (${res.active_rules.toLocaleString()} active rules)`);
-  loadStatus();
+async function toggleList(id, enabled, inputEl) {
+  if (inputEl) inputEl.disabled = true;
+  if (enabled) toast('Enabling & downloading list if needed...');
+  try {
+    const res = await (await apiFetch('/api/lists/' + encodeURIComponent(id), {
+      method: 'PATCH',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ enabled })
+    })).json();
+    toast(`List ${enabled ? (res.downloaded ? 'enabled & downloaded' : 'enabled') : 'disabled'} (${res.active_rules.toLocaleString()} active rules)`);
+    await loadLists();
+    loadStatus();
+  } finally {
+    if (inputEl) inputEl.disabled = false;
+  }
 }
 
 async function deleteList(id) {

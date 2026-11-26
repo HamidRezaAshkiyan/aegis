@@ -615,22 +615,47 @@ async fn toggle_list(
     AxumPath(id): AxumPath<String>,
     Json(req): Json<ToggleListRequest>,
 ) -> impl IntoResponse {
-    let found = {
+    let target_list = {
         let mut cfg = state.config.write().unwrap();
         if let Some(list) = cfg.lists.iter_mut().find(|l| l.id == id) {
             list.enabled = req.enabled;
-            true
+            Some(list.clone())
         } else {
-            false
+            None
         }
     };
-    if !found {
+    let Some(list) = target_list else {
         return StatusCode::NOT_FOUND.into_response();
+    };
+
+    // If enabling a list that isn't cached on disk yet, download it immediately so filtering starts right away
+    let mut downloaded = false;
+    if req.enabled && !core_engine::list_cache_path(&state.data_dir, &list.id).exists() {
+        if let Ok(ListDownloadOutcome::Updated {
+            parsed,
+            etag,
+            last_modified,
+        }) = download_list(&state.http_client, &list, &state.data_dir).await
+        {
+            downloaded = true;
+            let mut cfg = state.config.write().unwrap();
+            if let Some(entry) = cfg.lists.iter_mut().find(|l| l.id == list.id) {
+                entry.rule_count = parsed.blocked.len();
+                entry.last_updated = Some(Utc::now().to_rfc3339());
+                entry.etag = etag;
+                entry.last_modified = last_modified;
+            }
+        }
     }
+
     state.save_config();
     let cfg = state.config.read().unwrap().clone();
     let total = state.engine.reload_from_config(&cfg, &state.data_dir);
-    Json(serde_json::json!({ "active_rules": total })).into_response()
+    Json(serde_json::json!({
+        "active_rules": total,
+        "downloaded": downloaded
+    }))
+    .into_response()
 }
 
 async fn delete_list(

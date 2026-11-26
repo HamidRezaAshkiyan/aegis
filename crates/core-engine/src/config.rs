@@ -295,15 +295,52 @@ pub struct AegisConfig {
     pub log_max_rows: u64,
 }
 
-/// Safe-by-default DNS blocklists designed for near-zero false positives.
+/// Curated, DNS-safe filter lists. Core defaults (AdGuard DNS, PersianBlocker,
+/// Windows & Apple telemetry, and Threat Intelligence Mini) are enabled out of the box,
+/// while additional lists are ready to toggle on/off individually in the dashboard.
 pub fn default_filter_lists() -> Vec<FilterListConfig> {
     vec![
         FilterListConfig {
-            id: "hagezi-normal".to_string(),
-            name: "HaGeZi Multi Normal (Balanced Ads & Trackers)".to_string(),
-            url: "https://raw.githubusercontent.com/hagezi/dns-blocklists/main/adblock/multi.txt"
+            id: "adguard-dns".to_string(),
+            name: "AdGuard DNS Filter (Ads & Trackers)".to_string(),
+            url: "https://adguardteam.github.io/AdGuardSDNSFilter/Filters/filter.txt".to_string(),
+            category: BlockCategory::Ad,
+            enabled: true,
+            rule_count: 0,
+            last_updated: None,
+            etag: None,
+            last_modified: None,
+        },
+        FilterListConfig {
+            id: "persian-blocker".to_string(),
+            name: "PersianBlocker (Persian Ads & Trackers)".to_string(),
+            url: "https://raw.githubusercontent.com/MasterKia/PersianBlocker/main/PersianBlockerHosts.txt"
                 .to_string(),
             category: BlockCategory::Ad,
+            enabled: true,
+            rule_count: 0,
+            last_updated: None,
+            etag: None,
+            last_modified: None,
+        },
+        FilterListConfig {
+            id: "hagezi-windows".to_string(),
+            name: "HaGeZi Windows & Office Telemetry".to_string(),
+            url: "https://raw.githubusercontent.com/hagezi/dns-blocklists/main/adblock/native.winoffice.txt"
+                .to_string(),
+            category: BlockCategory::WindowsTelemetry,
+            enabled: true,
+            rule_count: 0,
+            last_updated: None,
+            etag: None,
+            last_modified: None,
+        },
+        FilterListConfig {
+            id: "hagezi-apple".to_string(),
+            name: "HaGeZi Apple / macOS Telemetry".to_string(),
+            url: "https://raw.githubusercontent.com/hagezi/dns-blocklists/main/adblock/native.apple.txt"
+                .to_string(),
+            category: BlockCategory::MacOSTelemetry,
             enabled: true,
             rule_count: 0,
             last_updated: None,
@@ -323,46 +360,45 @@ pub fn default_filter_lists() -> Vec<FilterListConfig> {
             last_modified: None,
         },
         FilterListConfig {
+            id: "hagezi-normal".to_string(),
+            name: "HaGeZi Multi Normal (Balanced Ads & Trackers)".to_string(),
+            url: "https://raw.githubusercontent.com/hagezi/dns-blocklists/main/adblock/multi.txt"
+                .to_string(),
+            category: BlockCategory::Tracker,
+            enabled: false,
+            rule_count: 0,
+            last_updated: None,
+            etag: None,
+            last_modified: None,
+        },
+        FilterListConfig {
+            id: "oisd-small".to_string(),
+            name: "OISD Small (Zero-Breakage Ads & Trackers)".to_string(),
+            url: "https://small.oisd.nl/".to_string(),
+            category: BlockCategory::Tracker,
+            enabled: false,
+            rule_count: 0,
+            last_updated: None,
+            etag: None,
+            last_modified: None,
+        },
+        FilterListConfig {
+            id: "stevenblack-hosts".to_string(),
+            name: "StevenBlack Unified Hosts (Adware & Malware)".to_string(),
+            url: "https://raw.githubusercontent.com/StevenBlack/hosts/master/hosts".to_string(),
+            category: BlockCategory::Malware,
+            enabled: false,
+            rule_count: 0,
+            last_updated: None,
+            etag: None,
+            last_modified: None,
+        },
+        FilterListConfig {
             id: "hagezi-pro".to_string(),
             name: "HaGeZi Multi PRO (Strict Ads & Trackers)".to_string(),
             url: "https://raw.githubusercontent.com/hagezi/dns-blocklists/main/adblock/pro.txt"
                 .to_string(),
             category: BlockCategory::Ad,
-            enabled: false,
-            rule_count: 0,
-            last_updated: None,
-            etag: None,
-            last_modified: None,
-        },
-        FilterListConfig {
-            id: "adguard-dns".to_string(),
-            name: "AdGuard DNS Filter".to_string(),
-            url: "https://adguardteam.github.io/AdGuardSDNSFilter/Filters/filter.txt".to_string(),
-            category: BlockCategory::Ad,
-            enabled: false,
-            rule_count: 0,
-            last_updated: None,
-            etag: None,
-            last_modified: None,
-        },
-        FilterListConfig {
-            id: "hagezi-windows".to_string(),
-            name: "HaGeZi Windows & Office Telemetry".to_string(),
-            url: "https://raw.githubusercontent.com/hagezi/dns-blocklists/main/adblock/native.winoffice.txt"
-                .to_string(),
-            category: BlockCategory::WindowsTelemetry,
-            enabled: false,
-            rule_count: 0,
-            last_updated: None,
-            etag: None,
-            last_modified: None,
-        },
-        FilterListConfig {
-            id: "hagezi-apple".to_string(),
-            name: "HaGeZi Apple / macOS Telemetry".to_string(),
-            url: "https://raw.githubusercontent.com/hagezi/dns-blocklists/main/adblock/native.apple.txt"
-                .to_string(),
-            category: BlockCategory::MacOSTelemetry,
             enabled: false,
             rule_count: 0,
             last_updated: None,
@@ -407,13 +443,29 @@ impl AegisConfig {
     pub fn load_or_create(path: &Path) -> anyhow::Result<Self> {
         if path.exists() {
             let content = std::fs::read_to_string(path)?;
-            let cfg: Self = toml::from_str(&content)?;
+            let mut cfg: Self = toml::from_str(&content)?;
+            if cfg.ensure_builtin_lists() {
+                let _ = cfg.save(path);
+            }
             Ok(cfg)
         } else {
             let cfg = Self::default();
             cfg.save(path)?;
             Ok(cfg)
         }
+    }
+
+    /// Merge any newly introduced built-in preset lists into an existing config
+    /// without altering the user's existing list toggles or custom lists.
+    pub fn ensure_builtin_lists(&mut self) -> bool {
+        let mut changed = false;
+        for preset in default_filter_lists() {
+            if !self.lists.iter().any(|l| l.id == preset.id) {
+                self.lists.push(preset);
+                changed = true;
+            }
+        }
+        changed
     }
 
     pub fn save(&self, path: &Path) -> anyhow::Result<()> {
@@ -426,25 +478,33 @@ impl AegisConfig {
     }
 
     /// Apply a built-in protection profile, ensuring preset lists exist and enabling
-    /// the appropriate subset while disabling overly aggressive lists like `easyprivacy`.
+    /// the appropriate subset while letting the user customize individual lists afterward.
     pub fn apply_profile(&mut self, profile: ProtectionProfile) {
-        for preset in default_filter_lists() {
-            if !self.lists.iter().any(|l| l.id == preset.id) {
-                self.lists.push(preset);
-            }
-        }
-
+        self.ensure_builtin_lists();
         self.baseline_rules_enabled = true;
 
         for list in &mut self.lists {
             list.enabled = match profile {
-                ProtectionProfile::Minimal => list.id == "hagezi-tif-mini",
-                ProtectionProfile::Balanced => {
-                    matches!(list.id.as_str(), "hagezi-normal" | "hagezi-tif-mini")
+                ProtectionProfile::Minimal => {
+                    matches!(list.id.as_str(), "adguard-dns" | "hagezi-tif-mini")
                 }
+                ProtectionProfile::Balanced => matches!(
+                    list.id.as_str(),
+                    "adguard-dns"
+                        | "persian-blocker"
+                        | "hagezi-windows"
+                        | "hagezi-apple"
+                        | "hagezi-tif-mini"
+                ),
                 ProtectionProfile::Strict => matches!(
                     list.id.as_str(),
-                    "hagezi-pro" | "hagezi-tif-mini" | "hagezi-windows" | "hagezi-apple"
+                    "adguard-dns"
+                        | "persian-blocker"
+                        | "hagezi-windows"
+                        | "hagezi-apple"
+                        | "hagezi-tif-mini"
+                        | "hagezi-pro"
+                        | "oisd-small"
                 ),
             };
         }

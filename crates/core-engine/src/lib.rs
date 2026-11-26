@@ -7,7 +7,9 @@ pub use config::{
     BlockCategory, DnsConfig, FilterListConfig, ProtectionProfile, ProxyConfig, UpstreamMode,
 };
 pub use engine::{FilterDecision, FilterEngine};
-pub use lists::{download_list, parse_filter_list, ListDownloadOutcome, ParsedRules};
+pub use lists::{
+    download_list, list_cache_path, parse_filter_list, ListDownloadOutcome, ParsedRules,
+};
 
 #[cfg(test)]
 mod tests {
@@ -51,17 +53,28 @@ mod tests {
     #[test]
     fn protection_profiles_and_baseline_toggle() {
         let mut cfg = AegisConfig::default();
-        cfg.apply_profile(ProtectionProfile::Minimal);
+        // Verify curated defaults are enabled out of the box
+        assert!(cfg.lists.iter().find(|l| l.id == "adguard-dns").unwrap().enabled);
+        assert!(cfg.lists.iter().find(|l| l.id == "persian-blocker").unwrap().enabled);
+        assert!(cfg.lists.iter().find(|l| l.id == "hagezi-windows").unwrap().enabled);
+        assert!(cfg.lists.iter().find(|l| l.id == "hagezi-apple").unwrap().enabled);
         assert!(cfg.lists.iter().find(|l| l.id == "hagezi-tif-mini").unwrap().enabled);
-        assert!(!cfg.lists.iter().find(|l| l.id == "hagezi-normal").unwrap().enabled);
+        assert!(!cfg.lists.iter().find(|l| l.id == "hagezi-pro").unwrap().enabled);
+        assert!(!cfg.lists.iter().find(|l| l.id == "oisd-small").unwrap().enabled);
+
+        cfg.apply_profile(ProtectionProfile::Minimal);
+        assert!(cfg.lists.iter().find(|l| l.id == "adguard-dns").unwrap().enabled);
+        assert!(cfg.lists.iter().find(|l| l.id == "hagezi-tif-mini").unwrap().enabled);
+        assert!(!cfg.lists.iter().find(|l| l.id == "persian-blocker").unwrap().enabled);
 
         cfg.apply_profile(ProtectionProfile::Balanced);
-        assert!(cfg.lists.iter().find(|l| l.id == "hagezi-normal").unwrap().enabled);
+        assert!(cfg.lists.iter().find(|l| l.id == "persian-blocker").unwrap().enabled);
+        assert!(cfg.lists.iter().find(|l| l.id == "hagezi-windows").unwrap().enabled);
         assert!(!cfg.lists.iter().find(|l| l.id == "hagezi-pro").unwrap().enabled);
 
         cfg.apply_profile(ProtectionProfile::Strict);
         assert!(cfg.lists.iter().find(|l| l.id == "hagezi-pro").unwrap().enabled);
-        assert!(cfg.lists.iter().find(|l| l.id == "hagezi-windows").unwrap().enabled);
+        assert!(cfg.lists.iter().find(|l| l.id == "oisd-small").unwrap().enabled);
 
         // Disabling baseline rules removes built-in doubleclick rule
         cfg.baseline_rules_enabled = false;
