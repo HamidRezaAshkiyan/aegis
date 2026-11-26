@@ -1,405 +1,1199 @@
 <!DOCTYPE html>
-<html lang="en">
+<html lang="en" data-theme="dark">
 <head>
 <meta charset="UTF-8" />
 <meta name="viewport" content="width=device-width, initial-scale=1.0" />
-<title>Aegis — System-Wide Ad &amp; Tracker Blocker</title>
+<title>Aegis — Ad Blocker, DoH, Anti-DPI &amp; Proxy</title>
 <style>
   :root {
-    --bg: #0b0f17;
-    --surface: #131926;
-    --surface-2: #1b2335;
-    --border: #263147;
-    --text: #e6edf7;
-    --muted: #8b9bb4;
+    color-scheme: dark;
+    --bg: #090d16;
+    --bg-elevated: #0f1523;
+    --surface: #131b2c;
+    --surface-2: #1a2438;
+    --surface-hover: #212e47;
+    --border: rgba(148, 163, 184, 0.14);
+    --border-strong: rgba(148, 163, 184, 0.25);
+    --text: #edf2fa;
+    --text-soft: #b8c5db;
+    --muted: #7f91ae;
     --accent: #3b82f6;
-    --green: #22c55e;
-    --red: #ef4444;
-    --amber: #f59e0b;
-    --purple: #a855f7;
+    --accent-soft: rgba(59, 130, 246, 0.14);
     --cyan: #06b6d4;
+    --green: #22c55e;
+    --green-soft: rgba(34, 197, 94, 0.12);
+    --red: #ef4444;
+    --red-soft: rgba(239, 68, 68, 0.13);
+    --amber: #f59e0b;
+    --amber-soft: rgba(245, 158, 11, 0.13);
+    --purple: #a855f7;
+    --purple-soft: rgba(168, 85, 247, 0.14);
+    --shadow: 0 12px 32px rgba(0, 0, 0, 0.35);
+    --radius: 14px;
+    --radius-sm: 9px;
   }
+
+  [data-theme="light"] {
+    color-scheme: light;
+    --bg: #f3f6fb;
+    --bg-elevated: #ffffff;
+    --surface: #ffffff;
+    --surface-2: #f1f5f9;
+    --surface-hover: #e2e8f0;
+    --border: rgba(15, 23, 42, 0.09);
+    --border-strong: rgba(15, 23, 42, 0.18);
+    --text: #0f172a;
+    --text-soft: #334155;
+    --muted: #64748b;
+    --accent: #2563eb;
+    --accent-soft: rgba(37, 99, 235, 0.1);
+    --shadow: 0 8px 24px rgba(15, 23, 42, 0.07);
+  }
+
   * { box-sizing: border-box; margin: 0; padding: 0; }
   body {
-    font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Inter, Roboto, sans-serif;
+    font-family: -apple-system, BlinkMacSystemFont, "Inter", "Segoe UI", Roboto, sans-serif;
     background: var(--bg);
     color: var(--text);
     line-height: 1.5;
     min-height: 100vh;
+    display: flex;
   }
-  header {
-    display: flex; align-items: center; justify-content: space-between; flex-wrap: wrap; gap: 12px;
-    padding: 16px 24px; background: var(--surface); border-bottom: 1px solid var(--border);
+
+  /* Sidebar */
+  aside.sidebar {
+    width: 248px;
+    flex-shrink: 0;
+    background: var(--bg-elevated);
+    border-right: 1px solid var(--border);
+    display: flex;
+    flex-direction: column;
+    position: sticky;
+    top: 0;
+    height: 100vh;
+    z-index: 40;
+    transition: transform .2s ease;
   }
-  .brand { display: flex; align-items: center; gap: 10px; font-weight: 700; font-size: 18px; }
-  .shield {
-    width: 30px; height: 30px; border-radius: 8px;
+  .sidebar-brand {
+    display: flex;
+    align-items: center;
+    gap: 11px;
+    padding: 20px 18px 16px;
+    border-bottom: 1px solid var(--border);
+  }
+  .logo-badge {
+    width: 36px; height: 36px; border-radius: 10px;
     background: linear-gradient(135deg, #3b82f6, #06b6d4);
-    display: grid; place-items: center; font-size: 16px;
+    display: grid; place-items: center;
+    box-shadow: 0 4px 14px rgba(59, 130, 246, 0.35);
+    color: #fff;
+    flex-shrink: 0;
   }
-  .status-bar { display: flex; align-items: center; gap: 10px; flex-wrap: wrap; }
-  .pill {
-    display: inline-flex; align-items: center; gap: 6px; padding: 4px 10px;
-    border-radius: 999px; font-size: 12px; font-weight: 600;
-    background: var(--surface-2); border: 1px solid var(--border); color: var(--muted);
+  .brand-title { font-weight: 700; font-size: 17px; letter-spacing: -.01em; line-height: 1.1; }
+  .brand-sub { font-size: 11px; color: var(--muted); font-family: ui-monospace, SFMono-Regular, Menlo, monospace; }
+
+  .nav-list {
+    padding: 12px 10px;
+    display: flex;
+    flex-direction: column;
+    gap: 3px;
+    overflow-y: auto;
+    flex: 1;
   }
-  .pill.ok { color: var(--green); border-color: rgba(34,197,94,.35); background: rgba(34,197,94,.08); }
-  .pill.paused { color: var(--amber); border-color: rgba(245,158,11,.35); background: rgba(245,158,11,.1); }
-  .dot { width: 8px; height: 8px; border-radius: 50%; background: currentColor; }
-  button {
-    cursor: pointer; border: 1px solid var(--border); background: var(--surface-2);
-    color: var(--text); padding: 6px 12px; border-radius: 8px; font-size: 13px; font-weight: 500;
-    transition: background .15s, border-color .15s;
+  .nav-section {
+    font-size: 10px;
+    font-weight: 700;
+    text-transform: uppercase;
+    letter-spacing: .08em;
+    color: var(--muted);
+    padding: 12px 10px 4px;
   }
-  button:hover { background: #232d44; border-color: #3a4a6b; }
-  button.primary { background: var(--accent); border-color: var(--accent); color: #fff; }
-  button.primary:hover { background: #2563eb; }
-  button.danger { color: var(--red); border-color: rgba(239,68,68,.35); }
-  button.danger:hover { background: rgba(239,68,68,.12); }
-  button.sm { padding: 3px 8px; font-size: 11px; border-radius: 6px; }
-  nav {
-    display: flex; gap: 4px; padding: 12px 24px 0; border-bottom: 1px solid var(--border);
-    background: var(--surface);
+  .nav-item {
+    display: flex;
+    align-items: center;
+    gap: 10px;
+    width: 100%;
+    text-align: left;
+    padding: 9px 12px;
+    border-radius: 10px;
+    border: 1px solid transparent;
+    background: transparent;
+    color: var(--text-soft);
+    font-size: 13.5px;
+    font-weight: 500;
+    cursor: pointer;
+    transition: all .15s;
   }
-  nav button {
-    border: none; border-bottom: 2px solid transparent; border-radius: 0;
-    background: transparent; padding: 10px 14px; color: var(--muted);
+  .nav-item:hover { background: var(--surface-2); color: var(--text); }
+  .nav-item.active {
+    background: var(--accent-soft);
+    color: var(--accent);
+    border-color: rgba(59, 130, 246, 0.25);
+    font-weight: 600;
   }
-  nav button.active { color: var(--text); border-bottom-color: var(--accent); }
-  main { max-width: 1140px; margin: 24px auto; padding: 0 20px 48px; }
-  .tab { display: none; }
+  .nav-item svg { width: 17px; height: 17px; flex-shrink: 0; opacity: .88; }
+  .nav-badge {
+    margin-left: auto;
+    font-size: 10px;
+    font-weight: 700;
+    padding: 1px 6px;
+    border-radius: 999px;
+    background: var(--surface-2);
+    color: var(--muted);
+  }
+
+  .sidebar-footer {
+    padding: 12px 14px;
+    border-top: 1px solid var(--border);
+    font-size: 12px;
+    color: var(--muted);
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+  }
+
+  /* Main layout */
+  .app-main {
+    flex: 1;
+    min-width: 0;
+    display: flex;
+    flex-direction: column;
+  }
+  header.topbar {
+    position: sticky;
+    top: 0;
+    z-index: 30;
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: 12px;
+    padding: 12px 24px;
+    background: color-mix(in srgb, var(--bg-elevated) 88%, transparent);
+    backdrop-filter: blur(12px);
+    border-bottom: 1px solid var(--border);
+  }
+  .topbar-left { display: flex; align-items: center; gap: 12px; }
+  .mobile-menu-btn { display: none; }
+  .page-heading { font-size: 16px; font-weight: 700; letter-spacing: -.01em; }
+  .topbar-right { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; }
+
+  main.content {
+    max-width: 1180px;
+    width: 100%;
+    margin: 0 auto;
+    padding: 22px 24px 60px;
+  }
+
+  .tab { display: none; animation: fadeIn .16s ease; }
   .tab.active { display: block; }
-  .grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(210px, 1fr)); gap: 14px; margin-bottom: 20px; }
+  @keyframes fadeIn { from { opacity: 0; transform: translateY(3px); } to { opacity: 1; transform: none; } }
+
+  /* Components */
+  .pill {
+    display: inline-flex; align-items: center; gap: 6px;
+    padding: 4px 10px; border-radius: 999px;
+    font-size: 12px; font-weight: 600;
+    background: var(--surface-2); border: 1px solid var(--border); color: var(--text-soft);
+  }
+  .pill.ok { color: var(--green); border-color: rgba(34,197,94,.3); background: var(--green-soft); }
+  .pill.warn { color: var(--amber); border-color: rgba(245,158,11,.35); background: var(--amber-soft); }
+  .pill.err { color: var(--red); border-color: rgba(239,68,68,.35); background: var(--red-soft); }
+  .pill.info { color: var(--accent); border-color: rgba(59,130,246,.3); background: var(--accent-soft); }
+  .dot { width: 7px; height: 7px; border-radius: 50%; background: currentColor; }
+  .dot.pulse { box-shadow: 0 0 0 0 currentColor; animation: pulse 2s infinite; }
+  @keyframes pulse { 0% { box-shadow: 0 0 0 0 rgba(34,197,94,.5); } 70% { box-shadow: 0 0 0 7px rgba(34,197,94,0); } 100% { box-shadow: 0 0 0 0 rgba(34,197,94,0); } }
+
+  button, .btn {
+    cursor: pointer;
+    display: inline-flex; align-items: center; justify-content: center; gap: 6px;
+    border: 1px solid var(--border-strong);
+    background: var(--surface-2);
+    color: var(--text);
+    padding: 7px 13px;
+    border-radius: var(--radius-sm);
+    font-size: 13px; font-weight: 500;
+    text-decoration: none;
+    transition: all .14s;
+  }
+  button:hover, .btn:hover { background: var(--surface-hover); }
+  button.primary, .btn.primary { background: var(--accent); border-color: var(--accent); color: #fff; }
+  button.primary:hover, .btn.primary:hover { filter: brightness(1.08); }
+  button.success { background: var(--green); border-color: var(--green); color: #062812; font-weight: 600; }
+  button.danger { color: var(--red); border-color: rgba(239,68,68,.35); background: var(--red-soft); }
+  button.danger:hover { background: rgba(239,68,68,.22); }
+  button.ghost { background: transparent; border-color: transparent; }
+  button.ghost:hover { background: var(--surface-2); }
+  button.sm, .btn.sm { padding: 4px 9px; font-size: 11.5px; border-radius: 7px; }
+  button:disabled { opacity: .55; cursor: not-allowed; }
+
   .card {
-    background: var(--surface); border: 1px solid var(--border); border-radius: 12px; padding: 18px;
+    background: var(--surface);
+    border: 1px solid var(--border);
+    border-radius: var(--radius);
+    padding: 20px;
+    box-shadow: var(--shadow);
   }
-  .card h3 { font-size: 12px; text-transform: uppercase; letter-spacing: .06em; color: var(--muted); margin-bottom: 8px; }
-  .metric { font-size: 30px; font-weight: 700; letter-spacing: -.02em; }
-  .metric.ads { color: var(--red); }
-  .metric.trackers { color: var(--purple); }
-  .metric.telemetry { color: var(--amber); }
-  .metric.rate { color: var(--cyan); }
-  .sub { font-size: 12px; color: var(--muted); margin-top: 4px; }
+  .card + .card { margin-top: 16px; }
+  .card-header {
+    display: flex; align-items: center; justify-content: space-between;
+    gap: 12px; flex-wrap: wrap; margin-bottom: 14px;
+  }
+  .card-title {
+    font-size: 14px; font-weight: 700; letter-spacing: -.01em;
+    display: flex; align-items: center; gap: 8px;
+  }
+  .card-desc { font-size: 13px; color: var(--muted); margin-bottom: 14px; }
+
+  .grid-4 { display: grid; grid-template-columns: repeat(4, minmax(0, 1fr)); gap: 14px; margin-bottom: 18px; }
+  .grid-3 { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 14px; margin-bottom: 18px; }
+  .grid-2 { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 16px; margin-bottom: 18px; }
+
+  .kpi-card {
+    background: var(--surface);
+    border: 1px solid var(--border);
+    border-radius: var(--radius);
+    padding: 18px;
+  }
+  .kpi-label { font-size: 11.5px; text-transform: uppercase; letter-spacing: .06em; color: var(--muted); font-weight: 600; }
+  .kpi-val { font-size: 30px; font-weight: 800; letter-spacing: -.03em; margin: 6px 0 2px; }
+  .kpi-sub { font-size: 12px; color: var(--muted); }
+  .c-red { color: var(--red); }
+  .c-purple { color: var(--purple); }
+  .c-amber { color: var(--amber); }
+  .c-cyan { color: var(--cyan); }
+  .c-green { color: var(--green); }
+
+  /* Hero */
+  .hero {
+    background: linear-gradient(135deg, rgba(59,130,246,.14), rgba(6,182,212,.08) 60%, var(--surface));
+    border: 1px solid rgba(59,130,246,.24);
+    border-radius: var(--radius);
+    padding: 20px 22px;
+    margin-bottom: 18px;
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: 16px;
+    flex-wrap: wrap;
+  }
+  .hero h2 { font-size: 19px; font-weight: 700; letter-spacing: -.015em; margin-bottom: 4px; }
+  .hero p { font-size: 13px; color: var(--text-soft); }
+  .service-pills { display: flex; gap: 7px; flex-wrap: wrap; margin-top: 10px; }
+
+  /* Forms & Switches */
+  input[type="text"], input[type="password"], input[type="number"], select, textarea {
+    background: var(--surface-2);
+    border: 1px solid var(--border-strong);
+    color: var(--text);
+    padding: 8px 11px;
+    border-radius: var(--radius-sm);
+    font-size: 13px;
+    outline: none;
+    width: 100%;
+    font-family: inherit;
+  }
+  textarea { resize: vertical; min-height: 68px; font-family: ui-monospace, SFMono-Regular, Menlo, monospace; font-size: 12px; }
+  input:focus, select:focus, textarea:focus { border-color: var(--accent); box-shadow: 0 0 0 3px var(--accent-soft); }
+  .field { display: flex; flex-direction: column; gap: 5px; margin-bottom: 12px; }
+  .field label { font-size: 12px; font-weight: 600; color: var(--text-soft); }
+  .field-hint { font-size: 11.5px; color: var(--muted); }
+  .row { display: flex; gap: 10px; align-items: center; flex-wrap: wrap; }
+
+  .switch-row {
+    display: flex; align-items: center; justify-content: space-between;
+    gap: 14px; padding: 12px 14px;
+    background: var(--surface-2); border: 1px solid var(--border); border-radius: 11px;
+  }
+  .switch-row + .switch-row { margin-top: 10px; }
+  .switch-info strong { display: block; font-size: 13.5px; }
+  .switch-info span { font-size: 12px; color: var(--muted); }
+
+  .switch {
+    position: relative; display: inline-block; width: 42px; height: 24px; flex-shrink: 0;
+  }
+  .switch input { opacity: 0; width: 0; height: 0; }
+  .slider {
+    position: absolute; cursor: pointer; inset: 0;
+    background: rgba(148,163,184,.28); border-radius: 999px; transition: .2s;
+  }
+  .slider::before {
+    content: ""; position: absolute; height: 18px; width: 18px; left: 3px; bottom: 3px;
+    background: #fff; border-radius: 50%; transition: .2s;
+  }
+  .switch input:checked + .slider { background: var(--accent); }
+  .switch input:checked + .slider::before { transform: translateX(18px); }
+
+  /* Tables */
+  .table-wrap { overflow-x: auto; }
   table { width: 100%; border-collapse: collapse; font-size: 13px; }
-  th, td { text-align: left; padding: 10px 12px; border-bottom: 1px solid var(--border); }
+  th, td { text-align: left; padding: 10px 12px; border-bottom: 1px solid var(--border); vertical-align: middle; }
   th { color: var(--muted); font-weight: 600; font-size: 11px; text-transform: uppercase; letter-spacing: .05em; }
+  tbody tr:hover { background: color-mix(in srgb, var(--surface-2) 55%, transparent); }
+
   .badge {
-    display: inline-block; padding: 2px 7px; border-radius: 6px; font-size: 11px; font-weight: 600;
-    background: var(--surface-2); color: var(--muted);
+    display: inline-flex; align-items: center; padding: 2px 8px;
+    border-radius: 6px; font-size: 11px; font-weight: 600;
+    background: var(--surface-2); color: var(--text-soft);
   }
-  .badge.ad { background: rgba(239,68,68,.15); color: #f87171; }
-  .badge.tracker { background: rgba(168,85,247,.15); color: #c084fc; }
-  .badge.windows_telemetry, .badge.macos_telemetry { background: rgba(245,158,11,.15); color: #fbbf24; }
-  .badge.allow { background: rgba(34,197,94,.12); color: #4ade80; }
+  .badge.ad { background: var(--red-soft); color: #f87171; }
+  .badge.tracker { background: var(--purple-soft); color: #c084fc; }
+  .badge.windows_telemetry, .badge.macos_telemetry { background: var(--amber-soft); color: #fbbf24; }
+  .badge.malware { background: rgba(244,63,94,.18); color: #fb7185; }
+  .badge.allow { background: var(--green-soft); color: #4ade80; }
   .badge.custom { background: rgba(6,182,212,.15); color: #22d3ee; }
-  .toolbar { display: flex; gap: 10px; align-items: center; flex-wrap: wrap; margin-bottom: 14px; }
-  input, select {
-    background: var(--surface-2); border: 1px solid var(--border); color: var(--text);
-    padding: 7px 11px; border-radius: 8px; font-size: 13px; outline: none;
+
+  .mono { font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace; font-size: 12px; }
+
+  /* Copy Chip */
+  .copy-chip {
+    display: inline-flex; align-items: center; gap: 8px;
+    background: var(--bg); border: 1px solid var(--border-strong);
+    padding: 6px 10px; border-radius: 8px;
+    font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+    font-size: 12px; color: var(--text);
   }
-  input:focus, select:focus { border-color: var(--accent); }
-  .row { display: flex; gap: 10px; flex-wrap: wrap; align-items: center; }
-  .mono { font-family: ui-monospace, SFMono-Regular, Menlo, monospace; font-size: 12px; }
-  .endpoints { display: flex; gap: 8px; flex-wrap: wrap; margin-bottom: 18px; }
-  .form-group { display: flex; flex-direction: column; gap: 6px; margin-bottom: 14px; max-width: 480px; }
-  label { font-size: 12px; color: var(--muted); font-weight: 600; }
+  .copy-chip button { padding: 2px 7px; font-size: 11px; }
+
+  /* Profile Cards */
+  .profile-card {
+    background: var(--surface-2);
+    border: 1px solid var(--border);
+    border-radius: 12px;
+    padding: 16px;
+    cursor: pointer;
+    transition: all .15s;
+    display: flex; flex-direction: column; gap: 6px;
+  }
+  .profile-card:hover { border-color: var(--accent); transform: translateY(-1px); }
+  .profile-card.recommended { border-color: rgba(59,130,246,.45); background: linear-gradient(180deg, var(--accent-soft), var(--surface-2)); }
+
+  /* Setup tabs */
+  .subtabs { display: flex; gap: 6px; flex-wrap: wrap; margin-bottom: 14px; }
+  .subtabs button.active { background: var(--accent); border-color: var(--accent); color: #fff; }
+  .subpanel { display: none; }
+  .subpanel.active { display: block; }
+  .step-list { list-style: none; counter-reset: st; display: flex; flex-direction: column; gap: 10px; }
+  .step-list li {
+    counter-increment: st;
+    display: flex; gap: 10px; align-items: flex-start;
+    font-size: 13px; color: var(--text-soft);
+  }
+  .step-list li::before {
+    content: counter(st);
+    width: 22px; height: 22px; border-radius: 50%; flex-shrink: 0;
+    background: var(--accent-soft); color: var(--accent);
+    display: grid; place-items: center; font-size: 11px; font-weight: 700;
+  }
+
+  .qr-box {
+    background: #fff;
+    padding: 12px;
+    border-radius: 12px;
+    display: inline-flex;
+    flex-direction: column;
+    align-items: center;
+    gap: 6px;
+    color: #0f172a;
+    border: 1px solid var(--border);
+  }
+  .qr-box span { font-size: 11px; font-weight: 600; color: #334155; }
+
+  /* Listener grid */
+  .listener-card {
+    background: var(--surface-2);
+    border: 1px solid var(--border);
+    border-radius: 12px;
+    padding: 14px;
+    display: flex;
+    flex-direction: column;
+    gap: 10px;
+  }
+
+  /* Chart */
+  .chart-wrap { width: 100%; height: 190px; position: relative; }
+  .chart-wrap svg { width: 100%; height: 100%; display: block; }
+
+  /* Toast & Native Dialog */
   .toast {
-    position: fixed; bottom: 20px; right: 20px; background: var(--surface-2);
-    border: 1px solid var(--accent); padding: 10px 16px; border-radius: 10px;
-    font-size: 13px; display: none; z-index: 99;
+    position: fixed; bottom: 22px; right: 22px;
+    background: var(--surface); border: 1px solid var(--accent);
+    padding: 11px 16px; border-radius: 11px;
+    font-size: 13px; box-shadow: var(--shadow);
+    display: none; z-index: 200;
   }
-  .modal-backdrop {
-    position: fixed; inset: 0; background: rgba(6,10,18,.82);
-    display: none; align-items: center; justify-content: center; z-index: 200;
+  dialog#auth-dialog {
+    margin: auto;
+    background: var(--surface);
+    color: var(--text);
+    border: 1px solid var(--border-strong);
+    border-radius: 16px;
+    padding: 24px;
+    width: min(390px, 92vw);
+    box-shadow: var(--shadow);
   }
-  .modal-backdrop.open { display: flex; }
-  .modal {
-    background: var(--surface); border: 1px solid var(--border); border-radius: 14px;
-    padding: 24px; width: 100%; max-width: 380px;
+  dialog#auth-dialog::backdrop { background: rgba(5, 8, 15, 0.78); backdrop-filter: blur(4px); }
+
+  @media (max-width: 960px) {
+    .grid-4 { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+    .grid-3 { grid-template-columns: 1fr; }
+    .grid-2 { grid-template-columns: 1fr; }
+    aside.sidebar {
+      position: fixed; left: 0; top: 0; bottom: 0;
+      transform: translateX(-100%);
+    }
+    aside.sidebar.open { transform: translateX(0); box-shadow: var(--shadow); }
+    .mobile-menu-btn { display: inline-flex; }
+    main.content { padding: 16px; }
   }
 </style>
 </head>
 <body>
-<header>
-  <div class="brand">
-    <div class="shield">🛡</div>
-    <span>Aegis</span>
-    <span class="pill mono" id="version-pill"></span>
-    <span class="pill" id="rules-pill">0 rules</span>
+
+<aside class="sidebar" id="sidebar">
+  <div class="sidebar-brand">
+    <div class="logo-badge">
+      <svg viewBox="0 0 24 24" width="20" height="20" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"><path d="M12 22s8-4 8-10V5l-8-3-8 3v7c0 6 8 10 8 10z"/></svg>
+    </div>
+    <div>
+      <div class="brand-title">Aegis</div>
+      <div class="brand-sub" id="version-pill">v1.0.0</div>
+    </div>
   </div>
-  <div class="status-bar">
-    <span class="pill ok" id="status-pill"><span class="dot"></span> Protected</span>
-    <button class="sm" onclick="pauseFor(300)">Pause 5m</button>
-    <button class="sm" onclick="pauseFor(900)">Pause 15m</button>
-    <button class="sm primary" onclick="pauseFor(0)">Resume</button>
-    <button class="sm" id="btn-logout" style="display:none;" onclick="logoutAuth()">Lock</button>
+
+  <nav class="nav-list" aria-label="Main navigation">
+    <div class="nav-section">Dashboard</div>
+    <button class="nav-item active" data-tab="overview" onclick="switchTab('overview', this)">
+      <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><rect x="3" y="3" width="7" height="9" rx="1"/><rect x="14" y="3" width="7" height="5" rx="1"/><rect x="14" y="12" width="7" height="9" rx="1"/><rect x="3" y="16" width="7" height="5" rx="1"/></svg>
+      Overview
+    </button>
+    <button class="nav-item" data-tab="setup" onclick="switchTab('setup', this)">
+      <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M12 2v4m0 12v4M4.93 4.93l2.83 2.83m8.48 8.48l2.83 2.83M2 12h4m12 0h4M4.93 19.07l2.83-2.83m8.48-8.48l2.83-2.83"/></svg>
+      Quick Setup
+      <span class="nav-badge">1-Step</span>
+    </button>
+    <button class="nav-item" data-tab="logs" onclick="switchTab('logs', this)">
+      <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><polyline points="22 12 18 12 15 21 9 3 6 12 2 12"/></svg>
+      Live Activity
+    </button>
+
+    <div class="nav-section">Protection</div>
+    <button class="nav-item" data-tab="lists" onclick="switchTab('lists', this)">
+      <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M12 22s8-4 8-10V5l-8-3-8 3v7c0 6 8 10 8 10z"/><path d="m9 12 2 2 4-4"/></svg>
+      Protection &amp; Lists
+      <span class="nav-badge" id="rules-badge">0</span>
+    </button>
+    <button class="nav-item" data-tab="rules" onclick="switchTab('rules', this)">
+      <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><line x1="8" y1="6" x2="21" y2="6"/><line x1="8" y1="12" x2="21" y2="12"/><line x1="8" y1="18" x2="21" y2="18"/><circle cx="4" cy="6" r="1"/><circle cx="4" cy="12" r="1"/><circle cx="4" cy="18" r="1"/></svg>
+      Custom Rules
+    </button>
+
+    <div class="nav-section">Networking</div>
+    <button class="nav-item" data-tab="network" onclick="switchTab('network', this)">
+      <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="12" cy="12" r="10"/><line x1="2" y1="12" x2="22" y2="12"/><path d="M12 2a15.3 15.3 0 0 1 4 10 15.3 15.3 0 0 1-4 10 15.3 15.3 0 0 1-4-10 15.3 15.3 0 0 1 4-10z"/></svg>
+      Proxy, DoH &amp; Anti-DPI
+    </button>
+    <button class="nav-item" data-tab="devices" onclick="switchTab('devices', this)">
+      <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><rect x="2" y="3" width="20" height="14" rx="2"/><line x1="8" y1="21" x2="16" y2="21"/><line x1="12" y1="17" x2="12" y2="21"/></svg>
+      Devices (LAN)
+    </button>
+
+    <div class="nav-section">System</div>
+    <button class="nav-item" data-tab="system" onclick="switchTab('system', this)">
+      <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="12" cy="12" r="3"/><path d="M19.4 15a1.65 1.65 0 0 0 .33 1.82l.06.06a2 2 0 1 1-2.83 2.83l-.06-.06a1.65 1.65 0 0 0-1.82-.33 1.65 1.65 0 0 0-1 1.51V21a2 2 0 0 1-4 0v-.09A1.65 1.65 0 0 0 9 19.4a1.65 1.65 0 0 0-1.82.33l-.06.06a2 2 0 1 1-2.83-2.83l.06-.06a1.65 1.65 0 0 0 .33-1.82 1.65 1.65 0 0 0-1.51-1H3a2 2 0 0 1 0-4h.09A1.65 1.65 0 0 0 4.6 9a1.65 1.65 0 0 0-.33-1.82l-.06-.06a2 2 0 1 1 2.83-2.83l.06.06a1.65 1.65 0 0 0 1.82.33H9a1.65 1.65 0 0 0 1-1.51V3a2 2 0 0 1 4 0v.09a1.65 1.65 0 0 0 1 1.51 1.65 1.65 0 0 0 1.82-.33l.06-.06a2 2 0 1 1 2.83 2.83l-.06.06a1.65 1.65 0 0 0-.33 1.82V9a1.65 1.65 0 0 0 1.51 1H21a2 2 0 0 1 0 4h-.09a1.65 1.65 0 0 0-1.51 1z"/></svg>
+      System &amp; Backup
+    </button>
+  </nav>
+
+  <div class="sidebar-footer">
+    <span id="os-label">macOS</span>
+    <button class="sm ghost" onclick="toggleTheme()" id="theme-btn" title="Toggle Dark/Light theme">Light Mode</button>
   </div>
-</header>
+</aside>
 
-<nav>
-  <button class="active" onclick="switchTab('overview', this)">Overview</button>
-  <button onclick="switchTab('logs', this)">Live Log</button>
-  <button onclick="switchTab('devices', this)">Devices (LAN)</button>
-  <button onclick="switchTab('lists', this)">Blocklists</button>
-  <button onclick="switchTab('rules', this)">Custom Rules</button>
-  <button onclick="switchTab('settings', this)">Settings</button>
-</nav>
+<div class="app-main">
+  <header class="topbar">
+    <div class="topbar-left">
+      <button class="sm mobile-menu-btn" onclick="document.getElementById('sidebar').classList.toggle('open')">Menu</button>
+      <div class="page-heading" id="page-title">Overview</div>
+    </div>
+    <div class="topbar-right">
+      <span class="pill ok" id="status-pill"><span class="dot pulse"></span> Protected</span>
+      <select id="pause-select" style="width:auto;padding:5px 9px;font-size:12px;" onchange="handlePauseSelect(this)">
+        <option value="">Pause...</option>
+        <option value="300">Pause 5 min</option>
+        <option value="900">Pause 15 min</option>
+        <option value="3600">Pause 1 hour</option>
+        <option value="0">Resume Now</option>
+      </select>
+      <button class="sm" id="btn-logout" style="display:none;" onclick="logoutAuth()">Lock</button>
+    </div>
+  </header>
 
-<main>
-  <!-- OVERVIEW -->
-  <section id="tab-overview" class="tab active">
-    <div class="endpoints" id="endpoints-bar"></div>
-    <div class="grid">
+  <main class="content">
+    <!-- ==================== 1. OVERVIEW ==================== -->
+    <section id="tab-overview" class="tab active">
+      <div class="hero">
+        <div>
+          <h2 id="hero-title">Aegis Protection is Active</h2>
+          <p id="hero-sub">Filtering ads, trackers, and malware across your configured listeners.</p>
+          <div class="service-pills" id="hero-services"></div>
+        </div>
+        <div class="row">
+          <button class="primary" onclick="navTo('setup')">Connect Devices</button>
+          <button onclick="navTo('network')">Configure Listeners</button>
+        </div>
+      </div>
+
+      <div class="grid-4">
+        <div class="kpi-card">
+          <div class="kpi-label">Ads Blocked</div>
+          <div class="kpi-val c-red" id="m-ads">0</div>
+          <div class="kpi-sub">Ad networks &amp; banners</div>
+        </div>
+        <div class="kpi-card">
+          <div class="kpi-label">Trackers Blocked</div>
+          <div class="kpi-val c-purple" id="m-trackers">0</div>
+          <div class="kpi-sub">Analytics &amp; app trackers</div>
+        </div>
+        <div class="kpi-card">
+          <div class="kpi-label">Telemetry &amp; Malware</div>
+          <div class="kpi-val c-amber" id="m-telemetry">0</div>
+          <div class="kpi-sub" id="m-telemetry-sub">Win: 0 · Mac: 0 · Malware: 0</div>
+        </div>
+        <div class="kpi-card">
+          <div class="kpi-label">Block Rate</div>
+          <div class="kpi-val c-cyan" id="m-rate">0%</div>
+          <div class="kpi-sub" id="m-total">0 / 0 requests blocked</div>
+        </div>
+      </div>
+
+      <div class="grid-2">
+        <div class="card">
+          <div class="card-header">
+            <div class="card-title">24-Hour Traffic Activity</div>
+            <div class="row" style="font-size:11.5px;color:var(--muted);">
+              <span><span style="display:inline-block;width:9px;height:9px;border-radius:2px;background:var(--accent);margin-right:4px;"></span>Allowed</span>
+              <span><span style="display:inline-block;width:9px;height:9px;border-radius:2px;background:var(--red);margin-right:4px;"></span>Blocked</span>
+            </div>
+          </div>
+          <div class="chart-wrap" id="timeline-chart"></div>
+        </div>
+
+        <div class="card">
+          <div class="card-header">
+            <div class="card-title">Top Blocked Domains</div>
+            <button class="sm danger" onclick="resetStats()">Reset Stats</button>
+          </div>
+          <div class="table-wrap">
+            <table>
+              <thead><tr><th>Domain</th><th>Category</th><th>Hits</th><th></th></tr></thead>
+              <tbody id="top-domains-body"><tr><td colspan="4" style="color:var(--muted)">No blocked domains yet.</td></tr></tbody>
+            </table>
+          </div>
+        </div>
+      </div>
+    </section>
+
+    <!-- ==================== 2. QUICK SETUP ==================== -->
+    <section id="tab-setup" class="tab">
+      <div class="grid-2">
+        <!-- This Computer 1-Step Configurator -->
+        <div class="card">
+          <div class="card-header">
+            <div class="card-title">One-Step Setup — This Computer (<span id="setup-os-name">macOS</span>)</div>
+            <span class="pill info">Crash-Safe Auto-Restore</span>
+          </div>
+          <p class="card-desc">Enable Aegis on this PC or Mac with one click. If Aegis exits or crashes, your network settings automatically restore.</p>
+
+          <div class="switch-row">
+            <div class="switch-info">
+              <strong>System Proxy (Recommended)</strong>
+              <span id="setup-proxy-desc">Routes HTTP/HTTPS &amp; SOCKS5 traffic through Aegis (also enables Anti-DPI &amp; VPN chaining).</span>
+            </div>
+            <label class="switch">
+              <input type="checkbox" id="q-sysproxy" onchange="quickToggleSetting('system_proxy_enabled', this.checked)" />
+              <span class="slider"></span>
+            </label>
+          </div>
+
+          <div class="switch-row">
+            <div class="switch-info">
+              <strong>System DNS</strong>
+              <span id="setup-dns-desc">Points OS DNS to Aegis. Requires UDP DNS listening on port 53.</span>
+            </div>
+            <label class="switch">
+              <input type="checkbox" id="q-sysdns" onchange="quickToggleSetting('system_dns_enabled', this.checked)" />
+              <span class="slider"></span>
+            </label>
+          </div>
+
+          <div class="switch-row">
+            <div class="switch-info">
+              <strong>Start Automatically at Login</strong>
+              <span id="setup-svc-desc">Install Aegis as a background launchd / Task Scheduler / systemd service.</span>
+            </div>
+            <button class="sm primary" id="btn-svc-toggle" onclick="toggleBgService()">Install Service</button>
+          </div>
+
+          <div style="margin-top:16px;padding-top:14px;border-top:1px solid var(--border);">
+            <div style="font-size:12px;font-weight:600;color:var(--text-soft);margin-bottom:8px;">One-Step Configurator Scripts (for this or any PC / Mac)</div>
+            <div class="row">
+              <a class="btn sm" href="/api/setup/script/macos" download>Download macOS (.sh)</a>
+              <a class="btn sm" href="/api/setup/script/windows" download>Download Windows PS7 (.ps1)</a>
+              <a class="btn sm" href="/proxy.pac" target="_blank">View proxy.pac</a>
+            </div>
+          </div>
+        </div>
+
+        <!-- LAN & Phone Quick Info + QR -->
+        <div class="card">
+          <div class="card-header">
+            <div class="card-title">Phone &amp; LAN Access</div>
+            <span class="pill" id="setup-lan-pill">Loopback Only</span>
+          </div>
+          <p class="card-desc">Enable <strong>LAN Mode</strong> to immediately bind Aegis to your local Wi-Fi network so phones, tablets, and other computers can connect — no restart required.</p>
+
+          <div class="switch-row" style="margin-bottom:14px;">
+            <div class="switch-info">
+              <strong>Allow LAN Devices (Bind 0.0.0.0)</strong>
+              <span id="setup-lan-ip-label">Detected LAN IP: detecting...</span>
+            </div>
+            <label class="switch">
+              <input type="checkbox" id="q-lanmode" onchange="quickToggleSetting('lan_mode', this.checked)" />
+              <span class="slider"></span>
+            </label>
+          </div>
+
+          <div class="row" style="align-items:flex-start;justify-content:space-between;">
+            <div style="flex:1;min-width:220px;display:flex;flex-direction:column;gap:8px;">
+              <div>
+                <div class="field-hint">Auto-Config PAC URL (iPhone / Android / Mac / Win)</div>
+                <div class="copy-chip"><span id="chip-pac">http://127.0.0.1:4242/proxy.pac</span><button class="sm" onclick="copyText('chip-pac')">Copy</button></div>
+              </div>
+              <div>
+                <div class="field-hint">Manual HTTP Proxy (Host : Port)</div>
+                <div class="copy-chip"><span id="chip-http">127.0.0.1:8080</span><button class="sm" onclick="copyText('chip-http')">Copy</button></div>
+              </div>
+              <div>
+                <div class="field-hint">Local DoH Endpoint (RFC 8484)</div>
+                <div class="copy-chip"><span id="chip-doh">http://127.0.0.1:4242/dns-query</span><button class="sm" onclick="copyText('chip-doh')">Copy</button></div>
+              </div>
+            </div>
+            <div class="qr-box">
+              <div id="qr-container"></div>
+              <span>Scan for PAC / Dashboard</span>
+            </div>
+          </div>
+        </div>
+      </div>
+
+      <!-- Step-by-step Device Guides -->
       <div class="card">
-        <h3>Ads Blocked</h3>
-        <div class="metric ads" id="m-ads">0</div>
-        <div class="sub">Ad networks &amp; banners</div>
+        <div class="card-header">
+          <div class="card-title">Step-by-Step Connection Guides</div>
+        </div>
+        <div class="subtabs">
+          <button class="sm active" onclick="switchSubtab('ios', this)">iPhone / iPad (iOS)</button>
+          <button class="sm" onclick="switchSubtab('android', this)">Android</button>
+          <button class="sm" onclick="switchSubtab('other-pc', this)">Other Mac / Windows PC</button>
+          <button class="sm" onclick="switchSubtab('vpn-chain', this)">VPN &amp; Proxy Chaining</button>
+        </div>
+
+        <div id="sub-ios" class="subpanel active">
+          <ol class="step-list">
+            <li>Turn on <strong>Allow LAN Devices</strong> above so your iPhone can reach this computer over Wi-Fi.</li>
+            <li>On your iPhone/iPad, open <strong>Settings → Wi-Fi</strong> and tap the <strong>(i)</strong> icon next to your Wi-Fi network.</li>
+            <li>Scroll to the bottom and tap <strong>Configure Proxy → Automatic</strong>.</li>
+            <li>Paste the PAC URL: <strong class="mono" id="guide-ios-pac"></strong> and tap <strong>Save</strong>. <em>(Or choose Manual with Server = <span class="mono" id="guide-ios-ip"></span> and Port = <span class="mono" id="guide-ios-port"></span>.)</em></li>
+            <li>Your phone now gets ad-blocking, Anti-DPI, and upstream VPN chaining automatically — with zero iOS apps required!</li>
+          </ol>
+        </div>
+
+        <div id="sub-android" class="subpanel">
+          <ol class="step-list">
+            <li>Turn on <strong>Allow LAN Devices</strong> above so your Android device can reach Aegis on your Wi-Fi.</li>
+            <li>Open <strong>Settings → Network &amp; Internet → Internet / Wi-Fi</strong>, tap the <strong>Gear</strong> icon on your Wi-Fi, then tap the <strong>Edit (pencil)</strong> icon.</li>
+            <li>Expand <strong>Advanced options → Proxy</strong> and select <strong>Proxy Auto-Config</strong>.</li>
+            <li>Enter PAC URL: <strong class="mono" id="guide-and-pac"></strong> and tap <strong>Save</strong>. <em>(Or select Manual with Hostname = <span class="mono" id="guide-and-ip"></span> and Port = <span class="mono" id="guide-and-port"></span>.)</em></li>
+          </ol>
+        </div>
+
+        <div id="sub-other-pc" class="subpanel">
+          <ol class="step-list">
+            <li>Enable <strong>Allow LAN Devices</strong> above.</li>
+            <li>On the other <strong>Mac</strong>, download <code>setup-aegis-macos.sh</code> and run: <code class="mono">bash setup-aegis-macos.sh</code> (undo with <code class="mono">--undo</code>).</li>
+            <li>On the other <strong>Windows PC</strong>, download <code>setup-aegis-windows.ps1</code> and run in PowerShell 7: <code class="mono">pwsh -File .\setup-aegis-windows.ps1</code> (undo with <code class="mono">-Undo</code>).</li>
+          </ol>
+        </div>
+
+        <div id="sub-vpn-chain" class="subpanel">
+          <ol class="step-list">
+            <li>Start your proxy/VPN client first (e.g., <strong>Clash, Sing-box, V2Ray, Hiddify, Nekoray, or Tor</strong>).</li>
+            <li>Go to <strong>Proxy, DoH &amp; Anti-DPI</strong> and click <strong>Scan Local Proxies</strong> to auto-detect its port in one click.</li>
+            <li>Click <strong>Test Connection</strong> to verify latency, and optionally enable <strong>Route Upstream DoH via Proxy</strong> if your ISP blocks Cloudflare/Google DNS.</li>
+            <li>If you use a system-wide TUN VPN (WireGuard/Tailscale/Outline) and don't need Aegis's DNS port, you can disable the UDP DNS listener in <strong>Proxy, DoH &amp; Anti-DPI</strong> without restarting.</li>
+          </ol>
+        </div>
       </div>
+    </section>
+
+    <!-- ==================== 3. LIVE ACTIVITY ==================== -->
+    <section id="tab-logs" class="tab">
       <div class="card">
-        <h3>Trackers Blocked</h3>
-        <div class="metric trackers" id="m-trackers">0</div>
-        <div class="sub">Analytics &amp; app trackers</div>
+        <div class="card-header">
+          <div class="card-title">Real-Time Traffic Stream</div>
+          <div class="row">
+            <button class="sm" id="btn-stream-pause" onclick="toggleStreamPause()">Pause Stream</button>
+            <button class="sm" onclick="clearLogView()">Clear View</button>
+          </div>
+        </div>
+        <div class="row" style="margin-bottom:14px;">
+          <input id="log-search" type="text" placeholder="Search domain, client IP, or list... (press /)" oninput="renderLogs()" style="flex:1;min-width:200px;" />
+          <select id="log-proto" onchange="renderLogs()" style="width:auto;">
+            <option value="all">All Protocols</option>
+            <option value="dns">DNS</option>
+            <option value="doh">DoH</option>
+            <option value="https">HTTPS</option>
+            <option value="http">HTTP</option>
+            <option value="socks5">SOCKS5</option>
+          </select>
+          <select id="log-filter" onchange="renderLogs()" style="width:auto;">
+            <option value="all">All Decisions</option>
+            <option value="block">Blocked Only</option>
+            <option value="allow">Allowed Only</option>
+          </select>
+        </div>
+        <div class="table-wrap">
+          <table>
+            <thead><tr><th>Time</th><th>Proto</th><th>Domain &amp; Client</th><th>Decision / Matched List</th><th>Latency</th><th>Quick Action</th></tr></thead>
+            <tbody id="logs-body"><tr><td colspan="6" style="color:var(--muted)">Waiting for traffic...</td></tr></tbody>
+          </table>
+        </div>
       </div>
+    </section>
+
+    <!-- ==================== 4. PROTECTION & LISTS ==================== -->
+    <section id="tab-lists" class="tab">
       <div class="card">
-        <h3>OS Telemetry Blocked</h3>
-        <div class="metric telemetry" id="m-telemetry">0</div>
-        <div class="sub" id="m-telemetry-sub">Windows: 0 · macOS: 0</div>
+        <div class="card-header">
+          <div class="card-title">Protection Profiles (Avoid Over-Blocking)</div>
+          <label class="row" style="font-size:12.5px;cursor:pointer;">
+            <input type="checkbox" id="baseline-toggle" onchange="quickToggleSetting('baseline_rules_enabled', this.checked)" />
+            Built-in Offline Baseline Rules
+          </label>
+        </div>
+        <p class="card-desc">Choose a preset to instantly tune how aggressively Aegis blocks. <strong>Balanced</strong> uses HaGeZi Multi Normal for near-zero false positives.</p>
+        <div class="grid-3">
+          <div class="profile-card" onclick="applyProfile('minimal')">
+            <div class="row" style="justify-content:space-between;"><strong>Minimal (Safest)</strong><span class="badge allow">Zero Breakage</span></div>
+            <div class="field-hint">Built-in ad baseline + Malware/Phishing protection only. Ideal if sites were breaking.</div>
+          </div>
+          <div class="profile-card recommended" onclick="applyProfile('balanced')">
+            <div class="row" style="justify-content:space-between;"><strong>Balanced</strong><span class="badge custom">Recommended</span></div>
+            <div class="field-hint">HaGeZi Multi Normal + Threat Intelligence Mini. Daily-driver ad &amp; tracker blocking.</div>
+          </div>
+          <div class="profile-card" onclick="applyProfile('strict')">
+            <div class="row" style="justify-content:space-between;"><strong>Strict + Telemetry</strong><span class="badge windows_telemetry">Aggressive</span></div>
+            <div class="field-hint">HaGeZi Multi PRO + Malware + Windows &amp; Apple OS telemetry lists.</div>
+          </div>
+        </div>
       </div>
+
       <div class="card">
-        <h3>Block Rate</h3>
-        <div class="metric rate" id="m-rate">0%</div>
-        <div class="sub" id="m-total">0 / 0 requests blocked</div>
+        <div class="card-header">
+          <div class="card-title">Subscribed Filter Lists</div>
+          <button class="primary sm" id="btn-update-lists" onclick="updateAllLists()">Update All Enabled Lists</button>
+        </div>
+        <div class="table-wrap">
+          <table>
+            <thead><tr><th>On</th><th>Name</th><th>Category</th><th>Rules</th><th>Updated</th><th></th></tr></thead>
+            <tbody id="lists-body"></tbody>
+          </table>
+        </div>
       </div>
-    </div>
 
-    <div class="card">
-      <div class="toolbar" style="justify-content: space-between;">
-        <h3 style="margin:0;">Top Blocked Domains</h3>
-        <button class="sm danger" onclick="resetStats()">Reset Counters</button>
-      </div>
-      <table>
-        <thead><tr><th>Domain</th><th>Category</th><th>Blocked Count</th></tr></thead>
-        <tbody id="top-domains-body"><tr><td colspan="3" style="color:var(--muted)">No blocked domains yet.</td></tr></tbody>
-      </table>
-    </div>
-  </section>
-
-  <!-- LIVE LOG -->
-  <section id="tab-logs" class="tab">
-    <div class="card">
-      <div class="toolbar">
-        <input id="log-search" type="text" placeholder="Filter domain..." oninput="renderLogs()" style="flex:1;min-width:200px;" />
-        <select id="log-filter" onchange="renderLogs()">
-          <option value="all">All Traffic</option>
-          <option value="block">Blocked Only</option>
-          <option value="allow">Allowed Only</option>
-        </select>
-      </div>
-      <table>
-        <thead><tr><th>Time</th><th>Proto</th><th>Domain</th><th>Status</th><th>Action</th></tr></thead>
-        <tbody id="logs-body"></tbody>
-      </table>
-    </div>
-  </section>
-
-  <!-- DEVICES / LAN CLIENTS -->
-  <section id="tab-devices" class="tab">
-    <div class="card" style="margin-bottom:16px;" id="lan-banner">
-      <h3>LAN / Pi-hole Mode</h3>
-      <p style="color:var(--muted);font-size:13px;" id="lan-instructions">
-        Enable <strong>LAN / Pi-hole Mode</strong> in Settings (or launch with <span class="mono">--lan</span>) to listen on <span class="mono">0.0.0.0</span> and protect phones, TVs, and IoT devices across your network.
-      </p>
-    </div>
-    <div class="card">
-      <div class="toolbar" style="justify-content:space-between;">
-        <h3 style="margin:0;">Connected Devices &amp; Per-IP Statistics</h3>
-        <button class="sm" onclick="loadClients()">Refresh</button>
-      </div>
-      <table>
-        <thead><tr><th>Device / IP</th><th>Total Requests</th><th>Blocked</th><th>Block Rate</th><th>Last Seen</th><th></th></tr></thead>
-        <tbody id="clients-body"><tr><td colspan="6" style="color:var(--muted)">No client activity recorded yet.</td></tr></tbody>
-      </table>
-    </div>
-  </section>
-
-  <!-- BLOCKLISTS -->
-  <section id="tab-lists" class="tab">
-    <div class="card" style="margin-bottom:16px;">
-      <div class="toolbar" style="justify-content:space-between;">
-        <h3 style="margin:0;">Subscribed Filter Lists</h3>
-        <button class="primary" id="btn-update-lists" onclick="updateAllLists()">Update All Lists</button>
-      </div>
-      <table>
-        <thead><tr><th>Enabled</th><th>Name</th><th>Category</th><th>Rules</th><th>Updated</th><th></th></tr></thead>
-        <tbody id="lists-body"></tbody>
-      </table>
-    </div>
-    <div class="card">
-      <h3>Add Custom Blocklist</h3>
-      <div class="row">
-        <input id="new-list-name" placeholder="List Name" />
-        <input id="new-list-url" placeholder="https://.../list.txt" style="flex:1;min-width:260px;" />
-        <select id="new-list-cat">
-          <option value="ad">Ads</option>
-          <option value="tracker">Trackers</option>
-          <option value="windows_telemetry">Windows Telemetry</option>
-          <option value="macos_telemetry">macOS Telemetry</option>
-          <option value="malware">Malware</option>
-        </select>
-        <button class="primary" onclick="addList()">Add List</button>
-      </div>
-    </div>
-  </section>
-
-  <!-- CUSTOM RULES -->
-  <section id="tab-rules" class="tab">
-    <div class="grid">
       <div class="card">
-        <h3>Custom Denylist (Always Block)</h3>
+        <div class="card-title" style="margin-bottom:12px;">Add Custom Blocklist</div>
+        <div class="row">
+          <input id="new-list-name" type="text" placeholder="List Name" style="max-width:210px;" />
+          <input id="new-list-url" type="text" placeholder="https://.../domains.txt" style="flex:1;min-width:240px;" />
+          <select id="new-list-cat" style="width:auto;">
+            <option value="ad">Ads</option>
+            <option value="tracker">Trackers</option>
+            <option value="malware">Malware</option>
+            <option value="windows_telemetry">Windows Telemetry</option>
+            <option value="macos_telemetry">macOS Telemetry</option>
+          </select>
+          <button class="primary" onclick="addList()">Add List</button>
+        </div>
+      </div>
+    </section>
+
+    <!-- ==================== 5. CUSTOM RULES ==================== -->
+    <section id="tab-rules" class="tab">
+      <div class="card">
+        <div class="card-title" style="margin-bottom:10px;">Domain Rule Tester</div>
+        <div class="row">
+          <input id="test-domain-input" type="text" placeholder="Enter any domain (e.g. ads.doubleclick.net or github.com)..." style="flex:1;" onkeydown="if(event.key==='Enter')testDomain()" />
+          <button class="primary" onclick="testDomain()">Check Domain</button>
+        </div>
+        <div id="test-domain-result" style="margin-top:10px;font-size:13px;"></div>
+      </div>
+
+      <div class="grid-2" style="margin-top:16px;">
+        <div class="card">
+          <div class="card-title" style="margin-bottom:10px;">Custom Allowlist (Always Allow)</div>
+          <div class="row" style="margin-bottom:12px;">
+            <input id="allow-input" type="text" placeholder="safe.example.com" style="flex:1;" onkeydown="if(event.key==='Enter')addRule('allow')" />
+            <button class="primary" onclick="addRule('allow')">Allow</button>
+          </div>
+          <div id="allowlist-items"></div>
+        </div>
+        <div class="card">
+          <div class="card-title" style="margin-bottom:10px;">Custom Denylist (Always Block)</div>
+          <div class="row" style="margin-bottom:12px;">
+            <input id="deny-input" type="text" placeholder="ads.example.com" style="flex:1;" onkeydown="if(event.key==='Enter')addRule('deny')" />
+            <button class="danger" onclick="addRule('deny')">Block</button>
+          </div>
+          <div id="denylist-items"></div>
+        </div>
+      </div>
+    </section>
+
+    <!-- ==================== 6. NETWORK, PROXY, DoH & ANTI-DPI ==================== -->
+    <section id="tab-network" class="tab">
+      <!-- Listeners (Hot-Reload) -->
+      <div class="card">
+        <div class="card-header">
+          <div class="card-title">Service Listeners &amp; Ports (Live Hot-Reload)</div>
+          <button class="primary" onclick="saveNetworkSettings()">Save &amp; Apply Live</button>
+        </div>
+        <p class="card-desc">Enable, disable, or change ports for any listener on the fly. Disable UDP DNS if you only want proxy mode or another DNS server owns port 53/5353.</p>
+
+        <div class="grid-2" style="margin-bottom:0;">
+          <div class="listener-card">
+            <div class="row" style="justify-content:space-between;">
+              <div><strong>UDP DNS Listener</strong> <span class="pill" id="st-dns">Checking...</span></div>
+              <label class="switch"><input type="checkbox" id="s-dns-enabled" /><span class="slider"></span></label>
+            </div>
+            <div class="field" style="margin:0;">
+              <label>Bind Address &amp; Port</label>
+              <input id="s-dns-listen" type="text" placeholder="127.0.0.1:5353" />
+              <div class="field-hint" id="err-dns">Use :53 for OS System DNS or :5353 for non-root.</div>
+            </div>
+          </div>
+
+          <div class="listener-card">
+            <div class="row" style="justify-content:space-between;">
+              <div><strong>Local DoH Server (/dns-query)</strong> <span class="pill" id="st-doh">Checking...</span></div>
+              <label class="switch"><input type="checkbox" id="s-doh-enabled" /><span class="slider"></span></label>
+            </div>
+            <div class="field" style="margin:0;">
+              <label>RFC 8484 Endpoint</label>
+              <input id="s-doh-addr" type="text" readonly />
+              <div class="field-hint">Works even when UDP DNS listener is disabled.</div>
+            </div>
+          </div>
+
+          <div class="listener-card">
+            <div class="row" style="justify-content:space-between;">
+              <div><strong>HTTP / HTTPS Proxy</strong> <span class="pill" id="st-http">Checking...</span></div>
+              <label class="switch"><input type="checkbox" id="s-http-enabled" /><span class="slider"></span></label>
+            </div>
+            <div class="field" style="margin:0;">
+              <label>Bind Address &amp; Port</label>
+              <input id="s-http-listen" type="text" placeholder="127.0.0.1:8080" />
+              <div class="field-hint" id="err-http">Used by System Proxy, PAC file, and phones.</div>
+            </div>
+          </div>
+
+          <div class="listener-card">
+            <div class="row" style="justify-content:space-between;">
+              <div><strong>SOCKS5 Proxy</strong> <span class="pill" id="st-socks5">Checking...</span></div>
+              <label class="switch"><input type="checkbox" id="s-socks5-enabled" /><span class="slider"></span></label>
+            </div>
+            <div class="field" style="margin:0;">
+              <label>Bind Address &amp; Port</label>
+              <input id="s-socks5-listen" type="text" placeholder="127.0.0.1:1080" />
+              <div class="field-hint" id="err-socks5">Ideal for browsers, Telegram, and terminal apps.</div>
+            </div>
+          </div>
+        </div>
+      </div>
+
+      <!-- Upstream DNS / DoH -->
+      <div class="card">
+        <div class="card-title" style="margin-bottom:8px;">Upstream DNS &amp; DoH Resolver</div>
         <div class="row" style="margin-bottom:12px;">
-          <input id="deny-input" placeholder="ads.example.com" style="flex:1;" />
-          <button class="danger" onclick="addRule('deny')">Block</button>
+          <button class="sm" onclick="setDnsUpstream('https://1.1.1.1/dns-query')">Cloudflare DoH</button>
+          <button class="sm" onclick="setDnsUpstream('https://dns.quad9.net/dns-query')">Quad9 DoH</button>
+          <button class="sm" onclick="setDnsUpstream('https://dns.google/dns-query')">Google DoH</button>
+          <button class="sm" onclick="setDnsUpstream('https://dns.adguard-dns.com/dns-query')">AdGuard DoH</button>
+          <button class="sm" onclick="setDnsUpstream('https://dns.mullvad.net/dns-query')">Mullvad DoH</button>
+          <button class="sm" onclick="setDnsUpstream('1.1.1.1:53')">Cloudflare UDP</button>
         </div>
-        <div id="denylist-items"></div>
+        <div class="field">
+          <label>Upstream Resolver (DoH https:// URL or IP:port)</label>
+          <input id="s-dns-upstream" type="text" placeholder="https://1.1.1.1/dns-query" />
+        </div>
+        <div class="grid-2" style="margin-bottom:0;">
+          <div class="switch-row">
+            <div class="switch-info">
+              <strong>CNAME Uncloaking</strong>
+              <span>Blocks trackers disguised behind first-party CNAME aliases.</span>
+            </div>
+            <label class="switch"><input type="checkbox" id="s-cname" /><span class="slider"></span></label>
+          </div>
+          <div class="switch-row">
+            <div class="switch-info">
+              <strong>Route DoH via Upstream Proxy</strong>
+              <span>Sends upstream DoH queries through your chained VPN/proxy.</span>
+            </div>
+            <label class="switch"><input type="checkbox" id="s-dns-via-proxy" /><span class="slider"></span></label>
+          </div>
+        </div>
       </div>
+
+      <!-- Upstream Proxy / VPN Chaining -->
       <div class="card">
-        <h3>Custom Allowlist (Always Allow)</h3>
+        <div class="card-header">
+          <div class="card-title">Upstream Proxy &amp; VPN Chaining</div>
+          <div class="row">
+            <button class="sm" id="btn-scan-upstream" onclick="scanLocalProxies()">Scan Local Proxies</button>
+            <button class="sm primary" id="btn-test-upstream" onclick="testUpstreamConn()">Test Connection</button>
+          </div>
+        </div>
+        <p class="card-desc">Chain allowed traffic from Aegis into Clash, V2Ray, Sing-box, Hiddify, Tor, or an SSH tunnel.</p>
+
+        <div id="scanned-proxies" class="row" style="margin-bottom:12px;"></div>
+        <div id="upstream-test-out" style="margin-bottom:12px;font-size:12.5px;"></div>
+
         <div class="row" style="margin-bottom:12px;">
-          <input id="allow-input" placeholder="safe.example.com" style="flex:1;" />
-          <button class="primary" onclick="addRule('allow')">Allow</button>
+          <button class="sm" onclick="presetUpstream('direct','')">Direct</button>
+          <button class="sm" onclick="presetUpstream('socks5','127.0.0.1:7890')">Clash (7890)</button>
+          <button class="sm" onclick="presetUpstream('socks5','127.0.0.1:10808')">V2Ray (10808)</button>
+          <button class="sm" onclick="presetUpstream('socks5','127.0.0.1:2080')">Sing-box (2080)</button>
+          <button class="sm" onclick="presetUpstream('socks5','127.0.0.1:12334')">Hiddify (12334)</button>
+          <button class="sm" onclick="presetUpstream('socks5','127.0.0.1:9050')">Tor (9050)</button>
         </div>
-        <div id="allowlist-items"></div>
-      </div>
-    </div>
-  </section>
 
-  <!-- PROXY & VPN SETTINGS -->
-  <section id="tab-settings" class="tab">
-    <div class="card">
-      <h3>Upstream Proxy / VPN Chaining</h3>
-      <p style="color:var(--muted);font-size:13px;margin-bottom:16px;">
-        Forward allowed HTTP &amp; SOCKS5 traffic directly to the internet, or chain into your local proxy manager (Clash, Sing-box, V2Ray, Nekoray).
-      </p>
-      <div class="row" style="margin-bottom:16px;">
-        <button class="sm" onclick="presetUpstream('direct','')">Direct Internet</button>
-        <button class="sm" onclick="presetUpstream('socks5','127.0.0.1:7890')">Preset: Clash (127.0.0.1:7890)</button>
-        <button class="sm" onclick="presetUpstream('socks5','127.0.0.1:10808')">Preset: V2Ray / Sing-box (127.0.0.1:10808)</button>
-      </div>
-      <div class="form-group">
-        <label>Outbound Mode</label>
-        <select id="s-mode">
-          <option value="direct">Direct (No Upstream Proxy)</option>
-          <option value="socks5">Chain via Upstream SOCKS5 Proxy</option>
-          <option value="http">Chain via Upstream HTTP Proxy</option>
-        </select>
-      </div>
-      <div class="form-group">
-        <label>Upstream Proxy Address (host:port)</label>
-        <input id="s-addr" placeholder="127.0.0.1:7890" />
-      </div>
-      <div class="form-group">
-        <label style="display:flex;align-items:center;gap:8px;cursor:pointer;">
-          <input type="checkbox" id="s-sysproxy" />
-          Enable OS System Proxy (macOS / Windows — auto-restores on exit)
-        </label>
-      </div>
-      <div class="form-group">
-        <label style="display:flex;align-items:center;gap:8px;cursor:pointer;">
-          <input type="checkbox" id="s-sysdns" />
-          Enable OS System DNS (macOS / Windows — snapshots &amp; auto-restores previous DNS)
-        </label>
-      </div>
-      <div class="form-group">
-        <label style="display:flex;align-items:center;gap:8px;cursor:pointer;">
-          <input type="checkbox" id="s-autoupdate" />
-          Scheduled Blocklist Auto-Updates (uses ETag / If-Modified-Since)
-        </label>
-      </div>
-      <div class="form-group">
-        <label>Auto-Update Interval (hours)</label>
-        <input id="s-interval" type="number" min="1" max="168" value="24" style="max-width:140px;" />
-      </div>
-      <div class="form-group">
-        <label style="display:flex;align-items:center;gap:8px;cursor:pointer;">
-          <input type="checkbox" id="s-lanmode" />
-          LAN / Pi-hole Mode (bind 0.0.0.0 on next restart or launch with --lan)
-        </label>
-      </div>
-      <div class="form-group">
-        <label style="display:flex;align-items:center;gap:8px;cursor:pointer;">
-          <input type="checkbox" id="s-authenabled" />
-          Require Password / Token for Dashboard &amp; API
-        </label>
-      </div>
-      <div class="form-group">
-        <label>Dashboard Password / API Token (leave blank to keep current)</label>
-        <input id="s-authtoken" type="password" placeholder="Enter new password or token..." />
-      </div>
-      <div class="row" style="margin-bottom:14px;">
-        <div class="form-group" style="margin-bottom:0;">
-          <label>Query Log Retention (days, 0 = unlimited)</label>
-          <input id="s-retention-days" type="number" min="0" max="3650" value="7" style="max-width:160px;" />
+        <div class="grid-2" style="margin-bottom:0;">
+          <div class="field">
+            <label>Outbound Mode</label>
+            <select id="s-mode">
+              <option value="direct">Direct Internet (No Upstream Proxy)</option>
+              <option value="socks5">Chain via Upstream SOCKS5 Proxy</option>
+              <option value="http">Chain via Upstream HTTP Proxy</option>
+            </select>
+          </div>
+          <div class="field">
+            <label>Upstream Proxy Address (host:port)</label>
+            <input id="s-addr" type="text" placeholder="127.0.0.1:7890" />
+          </div>
+          <div class="field">
+            <label>Upstream Username (optional)</label>
+            <input id="s-up-user" type="text" placeholder="Leave blank if no auth" />
+          </div>
+          <div class="field">
+            <label>Upstream Password (optional)</label>
+            <input id="s-up-pass" type="password" placeholder="Leave blank if no auth" />
+          </div>
         </div>
-        <div class="form-group" style="margin-bottom:0;">
-          <label>Max Query Log Rows (0 = unlimited)</label>
-          <input id="s-retention-rows" type="number" min="0" step="1000" value="50000" style="max-width:180px;" />
+        <div class="field" style="margin-bottom:0;">
+          <label>Bypass Upstream Proxy (Direct Domains, one per line or comma-separated)</label>
+          <textarea id="s-up-bypass" placeholder="localhost&#10;local&#10;lan&#10;internal"></textarea>
         </div>
       </div>
-      <div class="row">
-        <button class="primary" onclick="saveSettings()">Save &amp; Apply Live</button>
-        <button onclick="pruneLogsNow()">Prune Old Logs Now</button>
-      </div>
-    </div>
 
-    <div class="card" style="margin-top:16px;">
-      <h3>Backup &amp; Restore (Config, Rules &amp; Lists)</h3>
-      <p style="color:var(--muted);font-size:13px;margin-bottom:14px;">
-        Export your <span class="mono">config.toml</span>, custom allowlist/denylist, and blocklist subscriptions in one click, or restore from a backup file.
-      </p>
-      <div class="row" style="margin-bottom:16px;">
-        <button class="primary" onclick="exportConfig('toml')">Export config.toml</button>
-        <button onclick="exportConfig('json')">Export JSON</button>
+      <!-- Anti-DPI -->
+      <div class="card">
+        <div class="card-header">
+          <div class="card-title">Anti-DPI (TLS ClientHello SNI Fragmentation)</div>
+          <label class="switch"><input type="checkbox" id="s-dpi-enabled" /><span class="slider"></span></label>
+        </div>
+        <p class="card-desc">Bypasses SNI-based Deep Packet Inspection in Direct proxy mode by splitting TLS ClientHello records right inside the SNI hostname — zero root or kernel drivers required.</p>
+        <div class="grid-3" style="margin-bottom:10px;">
+          <div class="field" style="margin:0;">
+            <label>Fragmentation Mode</label>
+            <select id="s-dpi-mode">
+              <option value="tls_record_split">TLS Record Split (Recommended)</option>
+              <option value="tcp_chunk">TCP Chunking</option>
+              <option value="both">Both (Max Evasion)</option>
+            </select>
+          </div>
+          <div class="field" style="margin:0;">
+            <label>Chunk Size (bytes)</label>
+            <input id="s-dpi-chunk" type="number" min="1" max="512" value="40" />
+          </div>
+          <div class="field" style="margin:0;">
+            <label>Inter-Chunk Delay (ms)</label>
+            <input id="s-dpi-delay" type="number" min="0" max="50" value="2" />
+          </div>
+        </div>
+        <div class="grid-2" style="margin-bottom:12px;">
+          <div class="switch-row">
+            <div class="switch-info">
+              <strong>Split Inside SNI Hostname</strong>
+              <span>Parses the TLS ClientHello SNI extension and splits at its exact midpoint.</span>
+            </div>
+            <label class="switch"><input type="checkbox" id="s-dpi-sni" /><span class="slider"></span></label>
+          </div>
+          <div class="switch-row">
+            <div class="switch-info">
+              <strong>HTTP Host Header Mix-Case</strong>
+              <span>Sends <code>hOsT:</code> for plain HTTP requests to evade simple DPI rules.</span>
+            </div>
+            <label class="switch"><input type="checkbox" id="s-dpi-http" /><span class="slider"></span></label>
+          </div>
+        </div>
+        <div class="field" style="margin-bottom:14px;">
+          <label>Anti-DPI Bypass Domains (skip fragmentation for strict servers)</label>
+          <textarea id="s-dpi-bypass" placeholder="bank.example.com"></textarea>
+        </div>
+        <button class="primary" onclick="saveNetworkSettings()">Save &amp; Apply All Network Settings</button>
       </div>
-      <div class="row">
-        <input type="file" id="import-file" accept=".toml,.json,.txt" />
-        <select id="import-mode">
-          <option value="merge">Merge Rules &amp; Lists</option>
-          <option value="replace">Replace Entire Config</option>
-        </select>
-        <button class="primary" onclick="importConfig()">Import Backup</button>
-      </div>
-    </div>
-  </section>
-</main>
+    </section>
 
-<div class="modal-backdrop" id="auth-modal">
-  <div class="modal">
-    <h3 style="margin-bottom:8px;">Aegis Dashboard Login</h3>
-    <p style="color:var(--muted);font-size:13px;margin-bottom:14px;">Enter your Aegis password or API token to access the dashboard.</p>
-    <div class="form-group">
-      <input id="auth-modal-input" type="password" placeholder="Password / Token" onkeydown="if(event.key==='Enter')submitAuth()" />
-    </div>
-    <div id="auth-error" style="color:var(--red);font-size:12px;margin-bottom:10px;display:none;">Invalid password or token.</div>
-    <button class="primary" style="width:100%;" onclick="submitAuth()">Unlock Dashboard</button>
-  </div>
+    <!-- ==================== 7. DEVICES (LAN) ==================== -->
+    <section id="tab-devices" class="tab">
+      <div class="card">
+        <div class="card-header">
+          <div class="card-title">Connected Devices &amp; Per-IP Statistics</div>
+          <button class="sm" onclick="loadClients()">Refresh</button>
+        </div>
+        <div class="table-wrap">
+          <table>
+            <thead><tr><th>Device / IP</th><th>Total Requests</th><th>Blocked</th><th>Block Rate</th><th>Last Seen</th><th>Actions</th></tr></thead>
+            <tbody id="clients-body"><tr><td colspan="6" style="color:var(--muted)">No client activity recorded yet.</td></tr></tbody>
+          </table>
+        </div>
+      </div>
+    </section>
+
+    <!-- ==================== 8. SYSTEM & BACKUP ==================== -->
+    <section id="tab-system" class="tab">
+      <div class="card">
+        <div class="card-title" style="margin-bottom:12px;">Security, Auto-Updates &amp; Log Retention</div>
+        <div class="switch-row">
+          <div class="switch-info">
+            <strong>Dashboard Password / API Token</strong>
+            <span>Require authentication for the dashboard and REST API (DoH &amp; PAC remain accessible to clients).</span>
+          </div>
+          <label class="switch"><input type="checkbox" id="s-authenabled" /><span class="slider"></span></label>
+        </div>
+        <div class="field" style="margin-top:12px;max-width:420px;">
+          <label>Set / Change Password or Token (leave blank to keep current)</label>
+          <input id="s-authtoken" type="password" placeholder="Enter new password or token..." />
+        </div>
+
+        <div class="switch-row" style="margin-top:12px;">
+          <div class="switch-info">
+            <strong>Scheduled Blocklist Auto-Updates</strong>
+            <span>Checks enabled lists periodically using ETag / If-Modified-Since (HTTP 304).</span>
+          </div>
+          <label class="switch"><input type="checkbox" id="s-autoupdate" /><span class="slider"></span></label>
+        </div>
+
+        <div class="grid-3" style="margin-top:14px;">
+          <div class="field" style="margin:0;">
+            <label>Auto-Update Interval (hours)</label>
+            <input id="s-interval" type="number" min="1" max="168" value="24" />
+          </div>
+          <div class="field" style="margin:0;">
+            <label>Log Retention (days, 0 = unlimited)</label>
+            <input id="s-retention-days" type="number" min="0" max="3650" value="7" />
+          </div>
+          <div class="field" style="margin:0;">
+            <label>Max Log Rows (0 = unlimited)</label>
+            <input id="s-retention-rows" type="number" min="0" step="1000" value="50000" />
+          </div>
+        </div>
+        <div class="row" style="margin-top:14px;">
+          <button class="primary" onclick="saveNetworkSettings()">Save System Settings</button>
+          <button onclick="pruneLogsNow()">Prune Old Logs Now</button>
+        </div>
+      </div>
+
+      <div class="card">
+        <div class="card-title" style="margin-bottom:6px;">Backup &amp; Restore</div>
+        <p class="card-desc">Export your full <code>config.toml</code> (listeners, blocklists, allow/deny rules, Anti-DPI, and proxy chaining) or restore from a backup.</p>
+        <div class="row" style="margin-bottom:14px;">
+          <button class="primary" onclick="exportConfig('toml')">Export config.toml</button>
+          <button onclick="exportConfig('json')">Export JSON</button>
+        </div>
+        <div class="row">
+          <input type="file" id="import-file" accept=".toml,.json,.txt" style="max-width:280px;" />
+          <select id="import-mode" style="width:auto;">
+            <option value="merge">Merge Rules &amp; Lists</option>
+            <option value="replace">Replace Entire Config</option>
+          </select>
+          <button class="primary" onclick="importConfig()">Import Backup</button>
+        </div>
+      </div>
+    </section>
+  </main>
 </div>
+
+<dialog id="auth-dialog">
+  <h3 style="margin-bottom:6px;">Unlock Aegis Dashboard</h3>
+  <p style="color:var(--muted);font-size:13px;margin-bottom:14px;">Enter your Aegis password or API token.</p>
+  <div class="field">
+    <input id="auth-modal-input" type="password" placeholder="Password / Token" onkeydown="if(event.key==='Enter')submitAuth()" />
+  </div>
+  <div id="auth-error" style="color:var(--red);font-size:12px;margin-bottom:10px;display:none;">Invalid password or token.</div>
+  <button class="primary" style="width:100%;" onclick="submitAuth()">Unlock</button>
+</dialog>
 
 <div class="toast" id="toast"></div>
 
 <script>
+const TAB_TITLES = {
+  overview: 'Overview',
+  setup: 'Quick Setup',
+  logs: 'Live Activity',
+  lists: 'Protection & Lists',
+  rules: 'Custom Rules',
+  network: 'Proxy, DoH & Anti-DPI',
+  devices: 'Devices (LAN)',
+  system: 'System & Backup'
+};
+
 let logs = [];
+let streamPaused = false;
 let wsConn = null;
+let cachedSettings = null;
+let setupInfo = null;
+
+function esc(s) {
+  return String(s ?? '').replace(/[&<>"']/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
+}
 
 function getToken() { return localStorage.getItem('aegis_token') || ''; }
+
+function initTheme() {
+  const saved = localStorage.getItem('aegis_theme') || 'dark';
+  document.documentElement.setAttribute('data-theme', saved);
+  document.getElementById('theme-btn').textContent = saved === 'dark' ? 'Light Mode' : 'Dark Mode';
+}
+function toggleTheme() {
+  const cur = document.documentElement.getAttribute('data-theme') || 'dark';
+  const next = cur === 'dark' ? 'light' : 'dark';
+  document.documentElement.setAttribute('data-theme', next);
+  localStorage.setItem('aegis_theme', next);
+  document.getElementById('theme-btn').textContent = next === 'dark' ? 'Light Mode' : 'Dark Mode';
+}
+
+function showAuthDialog() {
+  const dlg = document.getElementById('auth-dialog');
+  if (!dlg.open) dlg.showModal();
+}
 
 async function apiFetch(url, opts = {}) {
   const headers = Object.assign({}, opts.headers || {});
   const tok = getToken();
   if (tok) headers['Authorization'] = 'Bearer ' + tok;
   const resp = await fetch(url, Object.assign({}, opts, { headers }));
-  if (resp.status === 401) {
-    document.getElementById('auth-modal').classList.add('open');
-  }
+  if (resp.status === 401) showAuthDialog();
   return resp;
 }
 
@@ -410,9 +1204,9 @@ async function submitAuth() {
   const res = await (await apiFetch('/api/auth/status')).json();
   if (res.authenticated) {
     document.getElementById('auth-error').style.display = 'none';
-    document.getElementById('auth-modal').classList.remove('open');
+    document.getElementById('auth-dialog').close();
     document.getElementById('auth-modal-input').value = '';
-    document.getElementById('btn-logout').style.display = res.auth_enabled ? 'inline-block' : 'none';
+    document.getElementById('btn-logout').style.display = res.auth_enabled ? 'inline-flex' : 'none';
     initDashboard();
   } else {
     document.getElementById('auth-error').style.display = 'block';
@@ -422,63 +1216,671 @@ async function submitAuth() {
 function logoutAuth() {
   localStorage.removeItem('aegis_token');
   if (wsConn) { try { wsConn.close(); } catch (_) {} }
-  document.getElementById('auth-modal').classList.add('open');
+  showAuthDialog();
 }
 
+let toastTimer = null;
 function toast(msg) {
   const el = document.getElementById('toast');
   el.textContent = msg;
   el.style.display = 'block';
-  setTimeout(() => { el.style.display = 'none'; }, 2600);
+  clearTimeout(toastTimer);
+  toastTimer = setTimeout(() => { el.style.display = 'none'; }, 2800);
 }
 
 function switchTab(id, btn) {
   document.querySelectorAll('.tab').forEach(t => t.classList.remove('active'));
-  document.querySelectorAll('nav button').forEach(b => b.classList.remove('active'));
+  document.querySelectorAll('.nav-item').forEach(b => b.classList.remove('active'));
   document.getElementById('tab-' + id).classList.add('active');
-  btn.classList.add('active');
+  if (btn) btn.classList.add('active');
+  document.getElementById('page-title').textContent = TAB_TITLES[id] || id;
+  document.getElementById('sidebar').classList.remove('open');
+  if (id === 'overview') { loadStatus(); loadStats(); loadTimeline(); }
+  if (id === 'setup') loadSetupInfo();
   if (id === 'devices') loadClients();
-  if (id === 'lists') loadLists();
+  if (id === 'lists') { loadLists(); loadSettings(); }
   if (id === 'rules') loadRules();
-  if (id === 'settings') loadSettings();
+  if (id === 'network' || id === 'system') { loadSettings(); loadStatus(); }
+}
+
+function navTo(id) {
+  const btn = document.querySelector(`.nav-item[data-tab="${id}"]`);
+  switchTab(id, btn);
+}
+
+function switchSubtab(id, btn) {
+  document.querySelectorAll('.subpanel').forEach(p => p.classList.remove('active'));
+  document.querySelectorAll('.subtabs button').forEach(b => b.classList.remove('active'));
+  document.getElementById('sub-' + id).classList.add('active');
+  btn.classList.add('active');
+}
+
+function copyText(elId) {
+  const txt = document.getElementById(elId).textContent.trim();
+  navigator.clipboard.writeText(txt).then(() => toast('Copied: ' + txt));
+}
+
+function handlePauseSelect(sel) {
+  if (sel.value === '') return;
+  pauseFor(parseInt(sel.value, 10));
+  sel.value = '';
+}
+
+async function pauseFor(seconds) {
+  await apiFetch('/api/pause', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ seconds })
+  });
+  toast(seconds > 0 ? `Protection paused for ${Math.round(seconds/60)} min` : 'Protection resumed');
+  loadStatus();
+}
+
+function svcBadgeHtml(label, st) {
+  if (!st) return '';
+  if (st.error) return `<span class="pill err" title="${esc(st.error)}"><span class="dot"></span>${label}: Error</span>`;
+  if (st.running) return `<span class="pill ok"><span class="dot"></span>${label}: ${esc(st.bound_addr || st.listen_addr)}</span>`;
+  return `<span class="pill"><span class="dot"></span>${label}: Off</span>`;
+}
+
+function setListenerPill(id, errId, st, fallbackHint) {
+  const pill = document.getElementById(id);
+  const hint = errId ? document.getElementById(errId) : null;
+  if (!pill || !st) return;
+  if (st.error) {
+    pill.className = 'pill err';
+    pill.textContent = 'Port Error';
+    if (hint) { hint.textContent = 'Error: ' + st.error; hint.style.color = 'var(--red)'; }
+  } else if (st.running) {
+    pill.className = 'pill ok';
+    pill.textContent = 'Running';
+    if (hint) { hint.textContent = 'Listening on ' + (st.bound_addr || st.listen_addr); hint.style.color = ''; }
+  } else {
+    pill.className = 'pill';
+    pill.textContent = 'Disabled';
+    if (hint) { hint.textContent = fallbackHint; hint.style.color = ''; }
+  }
 }
 
 async function loadStatus() {
   const resp = await apiFetch('/api/status');
   if (!resp.ok) return;
   const s = await resp.json();
-  if (s.version) {
-    document.getElementById('version-pill').textContent = 'v' + s.version;
-  }
-  document.getElementById('rules-pill').textContent = s.active_rules.toLocaleString() + ' rules';
+  document.getElementById('version-pill').textContent = 'v' + s.version;
+  document.getElementById('rules-badge').textContent = s.active_rules >= 1000
+    ? (s.active_rules / 1000).toFixed(1) + 'k' : String(s.active_rules);
+  document.getElementById('os-label').textContent = s.os.toUpperCase();
+
   const pill = document.getElementById('status-pill');
   if (s.paused_until) {
-    pill.className = 'pill paused';
+    pill.className = 'pill warn';
     pill.innerHTML = '<span class="dot"></span> Paused';
+    document.getElementById('hero-title').textContent = 'Protection is Temporarily Paused';
   } else {
     pill.className = 'pill ok';
-    pill.innerHTML = '<span class="dot"></span> Protected';
+    pill.innerHTML = '<span class="dot pulse"></span> Protected';
+    document.getElementById('hero-title').textContent = 'Aegis Protection is Active';
   }
-  document.getElementById('btn-logout').style.display = s.auth_enabled ? 'inline-block' : 'none';
-  const chain = s.upstream_mode === 'direct' ? 'Direct' : `${s.upstream_mode.toUpperCase()} → ${s.upstream_addr}`;
-  const lanPill = s.lan_mode ? `<span class="pill ok mono">LAN Mode (${escapeHtml(s.lan_ip || '0.0.0.0')})</span>` : '';
-  document.getElementById('endpoints-bar').innerHTML = `
-    <span class="pill mono">DNS: ${s.dns_listen}</span>
-    <span class="pill mono">HTTP Proxy: ${s.http_proxy_listen}</span>
-    <span class="pill mono">SOCKS5 Proxy: ${s.socks5_proxy_listen}</span>
-    <span class="pill mono">Outbound: ${chain}</span>
-    ${lanPill}
-  `;
-  const lanInfo = document.getElementById('lan-instructions');
-  if (lanInfo) {
-    if (s.lan_mode && s.lan_ip) {
-      lanInfo.innerHTML = `LAN / Pi-hole Mode is <strong>active</strong>. Point your phones, TVs, router, or IoT devices to DNS <span class="mono">${escapeHtml(s.lan_ip)}</span> (or proxy <span class="mono">${escapeHtml(s.lan_ip)}:8080</span>).`;
-    } else {
-      lanInfo.innerHTML = `Enable <strong>LAN / Pi-hole Mode</strong> in Settings (or launch with <span class="mono">--lan</span>) to listen on <span class="mono">0.0.0.0</span> and protect phones, TVs, and IoT devices across your network.`;
-    }
+
+  const upstreamLabel = s.upstream_mode === 'direct'
+    ? 'Direct Internet'
+    : `Chained via ${s.upstream_mode.toUpperCase()} (${s.upstream_addr})`;
+  document.getElementById('hero-sub').textContent =
+    `${s.active_rules.toLocaleString()} active rules · Outbound: ${upstreamLabel}` +
+    (s.anti_dpi_enabled ? ' · Anti-DPI Active' : '');
+
+  if (s.services) {
+    let pills = svcBadgeHtml('DNS', s.services.dns)
+      + svcBadgeHtml('DoH', s.services.doh)
+      + svcBadgeHtml('HTTP', s.services.http_proxy)
+      + svcBadgeHtml('SOCKS5', s.services.socks5_proxy);
+    if (s.anti_dpi_enabled) pills += '<span class="pill info"><span class="dot"></span>Anti-DPI: On</span>';
+    if (s.lan_mode) pills += `<span class="pill info"><span class="dot"></span>LAN: ${esc(s.lan_ip || '0.0.0.0')}</span>`;
+    document.getElementById('hero-services').innerHTML = pills;
+
+    setListenerPill('st-dns', 'err-dns', s.services.dns, 'UDP DNS listener is turned off.');
+    setListenerPill('st-doh', null, s.services.doh, '');
+    setListenerPill('st-http', 'err-http', s.services.http_proxy, 'HTTP/HTTPS proxy listener is turned off.');
+    setListenerPill('st-socks5', 'err-socks5', s.services.socks5_proxy, 'SOCKS5 proxy listener is turned off.');
+    const dohInput = document.getElementById('s-doh-addr');
+    if (dohInput) dohInput.value = s.services.doh.listen_addr;
   }
 }
 
+async function loadStats() {
+  const resp = await apiFetch('/api/stats');
+  if (!resp.ok) return;
+  const s = await resp.json();
+  document.getElementById('m-ads').textContent = s.ads_blocked.toLocaleString();
+  document.getElementById('m-trackers').textContent = s.trackers_blocked.toLocaleString();
+  const telTotal = s.windows_telemetry_blocked + s.macos_telemetry_blocked + s.malware_blocked;
+  document.getElementById('m-telemetry').textContent = telTotal.toLocaleString();
+  document.getElementById('m-telemetry-sub').textContent =
+    `Win: ${s.windows_telemetry_blocked} · Mac: ${s.macos_telemetry_blocked} · Malware: ${s.malware_blocked}`;
+  document.getElementById('m-rate').textContent = s.block_rate_percent.toFixed(1) + '%';
+  document.getElementById('m-total').textContent =
+    `${s.total_blocked.toLocaleString()} / ${s.total_requests.toLocaleString()} requests blocked`;
+
+  const tbody = document.getElementById('top-domains-body');
+  if (!s.top_blocked_domains.length) {
+    tbody.innerHTML = '<tr><td colspan="4" style="color:var(--muted)">No blocked domains yet.</td></tr>';
+  } else {
+    tbody.innerHTML = s.top_blocked_domains.map(d => `
+      <tr>
+        <td class="mono">${esc(d.domain)}</td>
+        <td><span class="badge ${esc(d.category)}">${esc(d.category)}</span></td>
+        <td>${d.count.toLocaleString()}</td>
+        <td><button class="sm" onclick="quickRule('allow','${esc(d.domain)}')">Allow</button></td>
+      </tr>
+    `).join('');
+  }
+}
+
+async function loadTimeline() {
+  const resp = await apiFetch('/api/stats/timeline?hours=24');
+  if (!resp.ok) return;
+  const buckets = await resp.json();
+  const el = document.getElementById('timeline-chart');
+  const maxVal = Math.max(1, ...buckets.map(b => b.total));
+  const w = 520, h = 175, padB = 22, padT = 8, plotH = h - padB - padT;
+  const barW = Math.max(6, Math.floor((w - 16) / buckets.length) - 4);
+
+  const bars = buckets.map((b, i) => {
+    const x = 8 + i * ((w - 16) / buckets.length);
+    const totalH = Math.round((b.total / maxVal) * plotH);
+    const blockH = Math.round((b.blocked / maxVal) * plotH);
+    const allowH = Math.max(0, totalH - blockH);
+    const yAllow = padT + plotH - totalH;
+    const yBlock = padT + plotH - blockH;
+    const label = (i % 4 === 0 || i === buckets.length - 1)
+      ? `<text x="${x + barW/2}" y="${h - 4}" text-anchor="middle" fill="var(--muted)" font-size="9.5">${esc(b.hour)}</text>`
+      : '';
+    return `<g>
+      <title>${esc(b.hour)} — Total: ${b.total}, Blocked: ${b.blocked}</title>
+      <rect x="${x}" y="${padT}" width="${barW}" height="${plotH}" rx="3" fill="var(--surface-2)" opacity="0.55"/>
+      ${allowH > 0 ? `<rect x="${x}" y="${yAllow}" width="${barW}" height="${allowH}" rx="2" fill="var(--accent)" opacity="0.85"/>` : ''}
+      ${blockH > 0 ? `<rect x="${x}" y="${yBlock}" width="${barW}" height="${blockH}" rx="2" fill="var(--red)"/>` : ''}
+      ${label}
+    </g>`;
+  }).join('');
+
+  el.innerHTML = `<svg viewBox="0 0 ${w} ${h}" preserveAspectRatio="none">${bars}</svg>`;
+}
+
+async function resetStats() {
+  await apiFetch('/api/stats/reset', { method: 'POST' });
+  logs = [];
+  renderLogs();
+  loadStats();
+  loadTimeline();
+  toast('Statistics reset');
+}
+
+// ==================== QUICK SETUP ====================
+async function loadSetupInfo() {
+  const resp = await apiFetch('/api/setup/info');
+  if (!resp.ok) return;
+  const s = await resp.json();
+  setupInfo = s;
+
+  const osPretty = s.os === 'macos' ? 'macOS' : s.os === 'windows' ? 'Windows' : 'Linux';
+  document.getElementById('setup-os-name').textContent = osPretty;
+  document.getElementById('q-sysproxy').checked = !!s.system_proxy_enabled;
+  document.getElementById('q-sysdns').checked = !!s.system_dns_enabled;
+  document.getElementById('q-lanmode').checked = !!s.lan_mode;
+
+  const dnsDesc = document.getElementById('setup-dns-desc');
+  if (s.dns_on_53) {
+    dnsDesc.textContent = `UDP DNS is on port 53 (${s.dns_listen}). Ready for OS System DNS.`;
+  } else {
+    dnsDesc.textContent = `Currently on port ${s.dns_port}. OS System DNS requires port 53 (or use System Proxy above — no port 53 needed).`;
+  }
+
+  const svcBtn = document.getElementById('btn-svc-toggle');
+  const svcDesc = document.getElementById('setup-svc-desc');
+  if (s.service_installed) {
+    svcBtn.textContent = 'Uninstall Service';
+    svcBtn.className = 'sm danger';
+    svcDesc.textContent = (s.service_running ? 'Installed & running. ' : 'Installed. ') + s.service_details;
+  } else {
+    svcBtn.textContent = 'Install Service';
+    svcBtn.className = 'sm primary';
+    svcDesc.textContent = 'Not installed yet. Install to start Aegis automatically at login.';
+  }
+
+  const lanPill = document.getElementById('setup-lan-pill');
+  lanPill.className = s.lan_mode ? 'pill ok' : 'pill';
+  lanPill.textContent = s.lan_mode ? 'LAN Active' : 'Local Only';
+  const ip = s.lan_ip || '127.0.0.1';
+  document.getElementById('setup-lan-ip-label').textContent = `Detected LAN IP: ${ip}`;
+
+  document.getElementById('chip-pac').textContent = s.pac_url;
+  document.getElementById('chip-http').textContent = `${ip}:${s.http_port}`;
+  document.getElementById('chip-doh').textContent = s.doh_url;
+
+  document.getElementById('guide-ios-pac').textContent = s.pac_url;
+  document.getElementById('guide-ios-ip').textContent = ip;
+  document.getElementById('guide-ios-port').textContent = s.http_port;
+  document.getElementById('guide-and-pac').textContent = s.pac_url;
+  document.getElementById('guide-and-ip').textContent = ip;
+  document.getElementById('guide-and-port').textContent = s.http_port;
+
+  renderQrSvg('qr-container', s.dashboard_url);
+}
+
+async function toggleBgService() {
+  if (!setupInfo) return;
+  const endpoint = setupInfo.service_installed ? '/api/service/uninstall' : '/api/service/install';
+  const resp = await apiFetch(endpoint, { method: 'POST' });
+  const data = await resp.json().catch(() => ({}));
+  if (resp.ok) {
+    toast(data.message || 'Service updated');
+  } else {
+    toast('Service error: ' + (data.error || resp.statusText));
+  }
+  loadSetupInfo();
+}
+
+// ==================== LIVE ACTIVITY ====================
+async function loadLogs() {
+  const resp = await apiFetch('/api/logs');
+  if (!resp.ok) return;
+  logs = await resp.json();
+  renderLogs();
+}
+
+function toggleStreamPause() {
+  streamPaused = !streamPaused;
+  document.getElementById('btn-stream-pause').textContent = streamPaused ? 'Resume Stream' : 'Pause Stream';
+}
+function clearLogView() { logs = []; renderLogs(); }
+
+function renderLogs() {
+  const q = document.getElementById('log-search').value.toLowerCase();
+  const f = document.getElementById('log-filter').value;
+  const p = document.getElementById('log-proto').value;
+  const tbody = document.getElementById('logs-body');
+
+  const filtered = logs.filter(ev => {
+    const isBlock = ev.decision && ev.decision.action === 'block';
+    if (f === 'block' && !isBlock) return false;
+    if (f === 'allow' && isBlock) return false;
+    if (p !== 'all' && ev.protocol !== p) return false;
+    if (q) {
+      const hay = `${ev.domain} ${ev.client} ${ev.decision?.list_name || ''} ${ev.decision?.matched_rule || ''}`.toLowerCase();
+      if (!hay.includes(q)) return false;
+    }
+    return true;
+  }).slice(0, 150);
+
+  if (!filtered.length) {
+    tbody.innerHTML = '<tr><td colspan="6" style="color:var(--muted)">No matching traffic events.</td></tr>';
+    return;
+  }
+
+  tbody.innerHTML = filtered.map(ev => {
+    const t = new Date(ev.timestamp).toLocaleTimeString();
+    const isBlock = ev.decision && ev.decision.action === 'block';
+    const badge = isBlock
+      ? `<span class="badge ${esc(ev.decision.category)}">${esc(ev.decision.category)}</span> <span class="field-hint">${esc(ev.decision.list_name || '')}</span>`
+      : `<span class="badge allow">allowed</span>`;
+    const btn = isBlock
+      ? `<button class="sm" onclick="quickRule('allow','${esc(ev.domain)}')">Allow</button>`
+      : `<button class="sm danger" onclick="quickRule('deny','${esc(ev.domain)}')">Block</button>`;
+    return `<tr>
+      <td class="mono" style="color:var(--muted);white-space:nowrap;">${t}</td>
+      <td><span class="badge">${esc(ev.protocol.toUpperCase())}</span></td>
+      <td><div class="mono">${esc(ev.domain)}</div><div class="field-hint">${esc(ev.client)}</div></td>
+      <td>${badge}</td>
+      <td class="mono" style="color:var(--muted)">${ev.latency_ms}ms</td>
+      <td>${btn}</td>
+    </tr>`;
+  }).join('');
+}
+
+function connectWs() {
+  if (wsConn) { try { wsConn.close(); } catch (_) {} }
+  const proto = location.protocol === 'https:' ? 'wss:' : 'ws:';
+  const tok = getToken();
+  const qs = tok ? '?token=' + encodeURIComponent(tok) : '';
+  wsConn = new WebSocket(`${proto}//${location.host}/api/logs/ws${qs}`);
+  wsConn.onmessage = (e) => {
+    try {
+      const ev = JSON.parse(e.data);
+      if (!streamPaused) {
+        logs.unshift(ev);
+        if (logs.length > 350) logs.pop();
+        renderLogs();
+      }
+      loadStats();
+    } catch (_) {}
+  };
+  wsConn.onclose = () => setTimeout(connectWs, 3000);
+}
+
+// ==================== PROTECTION & LISTS ====================
+async function applyProfile(name) {
+  const resp = await apiFetch('/api/profiles/' + name, { method: 'POST' });
+  if (!resp.ok) { toast('Failed to apply profile'); return; }
+  const data = await resp.json();
+  toast(`Applied "${name}" profile (${data.active_rules.toLocaleString()} active rules)`);
+  loadLists();
+  loadStatus();
+}
+
+async function loadLists() {
+  const resp = await apiFetch('/api/lists');
+  if (!resp.ok) return;
+  const lists = await resp.json();
+  document.getElementById('lists-body').innerHTML = lists.map(l => `
+    <tr>
+      <td><label class="switch"><input type="checkbox" ${l.enabled ? 'checked' : ''} onchange="toggleList('${esc(l.id)}', this.checked)" /><span class="slider"></span></label></td>
+      <td><strong>${esc(l.name)}</strong><div class="field-hint mono" style="max-width:360px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;">${esc(l.url)}</div></td>
+      <td><span class="badge ${esc(l.category)}">${esc(l.category)}</span></td>
+      <td class="mono">${(l.rule_count || 0).toLocaleString()}</td>
+      <td class="field-hint">${l.last_updated ? new Date(l.last_updated).toLocaleDateString() : 'Not downloaded'}</td>
+      <td><button class="sm danger" onclick="deleteList('${esc(l.id)}')">Remove</button></td>
+    </tr>
+  `).join('');
+}
+
+async function toggleList(id, enabled) {
+  const res = await (await apiFetch('/api/lists/' + encodeURIComponent(id), {
+    method: 'PATCH',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ enabled })
+  })).json();
+  toast(`List ${enabled ? 'enabled' : 'disabled'} (${res.active_rules.toLocaleString()} active rules)`);
+  loadStatus();
+}
+
+async function deleteList(id) {
+  await apiFetch('/api/lists/' + encodeURIComponent(id), { method: 'DELETE' });
+  toast('List removed');
+  loadLists();
+  loadStatus();
+}
+
+async function addList() {
+  const name = document.getElementById('new-list-name').value.trim();
+  const url = document.getElementById('new-list-url').value.trim();
+  const category = document.getElementById('new-list-cat').value;
+  if (!name || !url) return;
+  await apiFetch('/api/lists', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ name, url, category })
+  });
+  document.getElementById('new-list-name').value = '';
+  document.getElementById('new-list-url').value = '';
+  toast('List added — click Update All Enabled Lists to download');
+  loadLists();
+}
+
+async function updateAllLists() {
+  const btn = document.getElementById('btn-update-lists');
+  btn.disabled = true;
+  btn.textContent = 'Updating...';
+  try {
+    const res = await (await apiFetch('/api/lists/update', { method: 'POST' })).json();
+    toast(`Updated ${res.updated_lists}, unchanged ${res.not_modified_lists} (${res.active_rules.toLocaleString()} rules)`);
+    loadLists();
+    loadStatus();
+  } finally {
+    btn.disabled = false;
+    btn.textContent = 'Update All Enabled Lists';
+  }
+}
+
+// ==================== CUSTOM RULES ====================
+async function loadRules() {
+  const resp = await apiFetch('/api/rules');
+  if (!resp.ok) return;
+  const r = await resp.json();
+  document.getElementById('allowlist-items').innerHTML = r.allowlist.length
+    ? r.allowlist.map(d => `<div class="row" style="justify-content:space-between;padding:7px 0;border-bottom:1px solid var(--border);"><span class="mono">${esc(d)}</span><button class="sm" onclick="removeRule('${esc(d)}')">Remove</button></div>`).join('')
+    : '<div class="field-hint">No allowlisted domains yet.</div>';
+  document.getElementById('denylist-items').innerHTML = r.denylist.length
+    ? r.denylist.map(d => `<div class="row" style="justify-content:space-between;padding:7px 0;border-bottom:1px solid var(--border);"><span class="mono">${esc(d)}</span><button class="sm" onclick="removeRule('${esc(d)}')">Remove</button></div>`).join('')
+    : '<div class="field-hint">No custom blocked domains yet.</div>';
+}
+
+async function addRule(kind) {
+  const input = document.getElementById(kind === 'allow' ? 'allow-input' : 'deny-input');
+  const domain = input.value.trim();
+  if (!domain) return;
+  await quickRule(kind, domain);
+  input.value = '';
+  loadRules();
+}
+
+async function quickRule(kind, domain) {
+  await apiFetch('/api/rules/' + kind, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ domain })
+  });
+  toast(`${kind === 'allow' ? 'Allowed' : 'Blocked'}: ${domain}`);
+  loadStatus();
+}
+
+async function removeRule(domain) {
+  await apiFetch('/api/rules', {
+    method: 'DELETE',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ domain })
+  });
+  toast('Removed rule: ' + domain);
+  loadRules();
+  loadStatus();
+}
+
+async function testDomain() {
+  const domain = document.getElementById('test-domain-input').value.trim();
+  if (!domain) return;
+  const resp = await apiFetch('/api/rules/test', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ domain })
+  });
+  if (!resp.ok) return;
+  const data = await resp.json();
+  const out = document.getElementById('test-domain-result');
+  if (data.decision.action === 'block') {
+    out.innerHTML = `<span class="pill err">BLOCKED</span> <span class="mono">${esc(domain)}</span> matched rule <strong class="mono">${esc(data.decision.matched_rule)}</strong> in <strong>${esc(data.decision.list_name)}</strong> (${esc(data.decision.category)}). <button class="sm" style="margin-left:8px;" onclick="quickRule('allow','${esc(domain)}')">Allow Instead</button>`;
+  } else {
+    out.innerHTML = `<span class="pill ok">ALLOWED</span> <span class="mono">${esc(domain)}</span> is currently permitted. <button class="sm danger" style="margin-left:8px;" onclick="quickRule('deny','${esc(domain)}')">Block Domain</button>`;
+  }
+}
+
+// ==================== SETTINGS, NETWORK, PROXY & ANTI-DPI ====================
+async function loadSettings() {
+  const resp = await apiFetch('/api/settings');
+  if (!resp.ok) return;
+  const s = await resp.json();
+  cachedSettings = s;
+
+  document.getElementById('s-dns-enabled').checked = !!s.dns_enabled;
+  document.getElementById('s-dns-listen').value = s.dns_listen || '127.0.0.1:5353';
+  document.getElementById('s-dns-upstream').value = s.dns_upstream || 'https://1.1.1.1/dns-query';
+  document.getElementById('s-cname').checked = !!s.cname_uncloaking;
+  document.getElementById('s-doh-enabled').checked = !!s.doh_server_enabled;
+  document.getElementById('s-dns-via-proxy').checked = !!s.dns_use_upstream_proxy;
+
+  document.getElementById('s-http-enabled').checked = !!s.http_enabled;
+  document.getElementById('s-http-listen').value = s.http_listen || '127.0.0.1:8080';
+  document.getElementById('s-socks5-enabled').checked = !!s.socks5_enabled;
+  document.getElementById('s-socks5-listen').value = s.socks5_listen || '127.0.0.1:1080';
+
+  document.getElementById('s-mode').value = s.upstream_mode || 'direct';
+  document.getElementById('s-addr').value = s.upstream_addr || '';
+  document.getElementById('s-up-user').value = s.upstream_username || '';
+  document.getElementById('s-up-pass').value = s.upstream_password || '';
+  document.getElementById('s-up-bypass').value = (s.upstream_bypass || []).join('\n');
+
+  const dpi = s.anti_dpi || {};
+  document.getElementById('s-dpi-enabled').checked = !!dpi.enabled;
+  document.getElementById('s-dpi-mode').value = dpi.mode || 'tls_record_split';
+  document.getElementById('s-dpi-sni').checked = dpi.split_at_sni !== false;
+  document.getElementById('s-dpi-chunk').value = dpi.chunk_size || 40;
+  document.getElementById('s-dpi-delay').value = dpi.delay_ms ?? 2;
+  document.getElementById('s-dpi-http').checked = !!dpi.http_host_mix_case;
+  document.getElementById('s-dpi-bypass').value = (dpi.bypass_domains || []).join('\n');
+
+  document.getElementById('baseline-toggle').checked = s.baseline_rules_enabled !== false;
+  document.getElementById('s-autoupdate').checked = !!s.auto_update_enabled;
+  document.getElementById('s-interval').value = s.auto_update_interval_hours || 24;
+  document.getElementById('s-authenabled').checked = !!s.auth_enabled;
+  document.getElementById('s-authtoken').value = '';
+  document.getElementById('s-retention-days').value = s.log_retention_days ?? 7;
+  document.getElementById('s-retention-rows').value = s.log_max_rows ?? 50000;
+}
+
+function parseListField(text) {
+  return text.split(/[\n,]+/).map(s => s.trim()).filter(Boolean);
+}
+
+function buildSettingsPayload() {
+  const base = cachedSettings || {};
+  const tok = document.getElementById('s-authtoken').value.trim();
+  const upUser = document.getElementById('s-up-user').value.trim();
+  const upPass = document.getElementById('s-up-pass').value;
+  return {
+    dns_enabled: document.getElementById('s-dns-enabled').checked,
+    dns_listen: document.getElementById('s-dns-listen').value.trim(),
+    dns_upstream: document.getElementById('s-dns-upstream').value.trim(),
+    cname_uncloaking: document.getElementById('s-cname').checked,
+    doh_server_enabled: document.getElementById('s-doh-enabled').checked,
+    dns_use_upstream_proxy: document.getElementById('s-dns-via-proxy').checked,
+    http_enabled: document.getElementById('s-http-enabled').checked,
+    http_listen: document.getElementById('s-http-listen').value.trim(),
+    socks5_enabled: document.getElementById('s-socks5-enabled').checked,
+    socks5_listen: document.getElementById('s-socks5-listen').value.trim(),
+    upstream_mode: document.getElementById('s-mode').value,
+    upstream_addr: document.getElementById('s-addr').value.trim(),
+    upstream_username: upUser || null,
+    upstream_password: upPass || null,
+    upstream_bypass: parseListField(document.getElementById('s-up-bypass').value),
+    anti_dpi: {
+      enabled: document.getElementById('s-dpi-enabled').checked,
+      mode: document.getElementById('s-dpi-mode').value,
+      split_at_sni: document.getElementById('s-dpi-sni').checked,
+      chunk_size: parseInt(document.getElementById('s-dpi-chunk').value, 10) || 40,
+      delay_ms: parseInt(document.getElementById('s-dpi-delay').value, 10) || 0,
+      http_host_mix_case: document.getElementById('s-dpi-http').checked,
+      bypass_domains: parseListField(document.getElementById('s-dpi-bypass').value)
+    },
+    baseline_rules_enabled: document.getElementById('baseline-toggle').checked,
+    system_proxy_enabled: base.system_proxy_enabled || false,
+    system_dns_enabled: base.system_dns_enabled || false,
+    lan_mode: base.lan_mode || false,
+    auto_update_enabled: document.getElementById('s-autoupdate').checked,
+    auto_update_interval_hours: parseInt(document.getElementById('s-interval').value, 10) || 24,
+    auth_enabled: document.getElementById('s-authenabled').checked,
+    auth_token: tok || null,
+    log_retention_days: parseInt(document.getElementById('s-retention-days').value, 10) || 0,
+    log_max_rows: parseInt(document.getElementById('s-retention-rows').value, 10) || 0
+  };
+}
+
+async function saveNetworkSettings() {
+  const payload = buildSettingsPayload();
+  const resp = await apiFetch('/api/settings', {
+    method: 'PUT',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify(payload)
+  });
+  if (resp.ok) {
+    if (payload.auth_enabled && payload.auth_token) {
+      localStorage.setItem('aegis_token', payload.auth_token);
+    }
+    toast('Settings saved and applied live');
+    await loadSettings();
+    await loadStatus();
+  } else {
+    const err = await resp.json().catch(() => ({}));
+    toast('Error: ' + (err.error || resp.statusText));
+  }
+}
+
+async function quickToggleSetting(key, val) {
+  if (!cachedSettings) await loadSettings();
+  const payload = Object.assign({}, cachedSettings, { [key]: val });
+  const resp = await apiFetch('/api/settings', {
+    method: 'PUT',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify(payload)
+  });
+  if (resp.ok) {
+    cachedSettings[key] = val;
+    toast('Updated live');
+    loadStatus();
+    loadSetupInfo();
+  } else {
+    const err = await resp.json().catch(() => ({}));
+    toast('Error: ' + (err.error || resp.statusText));
+    loadSetupInfo();
+  }
+}
+
+function setDnsUpstream(val) {
+  document.getElementById('s-dns-upstream').value = val;
+  toast('Selected DNS upstream: ' + val);
+}
+
+function presetUpstream(mode, addr) {
+  document.getElementById('s-mode').value = mode;
+  document.getElementById('s-addr').value = addr;
+  toast('Preset loaded — click Save & Apply Live');
+}
+
+async function scanLocalProxies() {
+  const btn = document.getElementById('btn-scan-upstream');
+  btn.disabled = true;
+  btn.textContent = 'Scanning...';
+  try {
+    const found = await (await apiFetch('/api/upstream/scan')).json();
+    const box = document.getElementById('scanned-proxies');
+    if (!found.length) {
+      box.innerHTML = '<span class="field-hint">No local proxy/VPN ports detected on 127.0.0.1.</span>';
+    } else {
+      box.innerHTML = '<span class="field-hint">Detected:</span> ' + found.map(p =>
+        `<button class="sm success" onclick="presetUpstream('${esc(p.mode)}','${esc(p.addr)}')">Use ${esc(p.name)} (${esc(p.addr)})</button>`
+      ).join('');
+    }
+  } finally {
+    btn.disabled = false;
+    btn.textContent = 'Scan Local Proxies';
+  }
+}
+
+async function testUpstreamConn() {
+  const btn = document.getElementById('btn-test-upstream');
+  btn.disabled = true;
+  btn.textContent = 'Testing...';
+  try {
+    const resp = await apiFetch('/api/upstream/test', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        upstream_mode: document.getElementById('s-mode').value,
+        upstream_addr: document.getElementById('s-addr').value.trim(),
+        upstream_username: document.getElementById('s-up-user').value.trim() || null,
+        upstream_password: document.getElementById('s-up-pass').value || null
+      })
+    });
+    const res = await resp.json();
+    const out = document.getElementById('upstream-test-out');
+    out.innerHTML = res.ok
+      ? `<span class="pill ok">OK · ${res.latency_ms}ms</span> ${esc(res.message)}`
+      : `<span class="pill err">Failed · ${res.latency_ms}ms</span> ${esc(res.message)}`;
+  } finally {
+    btn.disabled = false;
+    btn.textContent = 'Test Connection';
+  }
+}
+
+// ==================== DEVICES ====================
 async function loadClients() {
   const resp = await apiFetch('/api/clients');
   if (!resp.ok) return;
@@ -488,353 +1890,241 @@ async function loadClients() {
     tbody.innerHTML = '<tr><td colspan="6" style="color:var(--muted)">No client activity recorded yet.</td></tr>';
     return;
   }
-  tbody.innerHTML = clients.map(c => {
-    const label = c.name ? `<strong>${escapeHtml(c.name)}</strong> <span class="mono" style="color:var(--muted)">(${escapeHtml(c.client)})</span>` : `<span class="mono">${escapeHtml(c.client)}</span>`;
-    const seen = c.last_seen ? new Date(c.last_seen).toLocaleString() : '-';
-    return `<tr>
-      <td>${label}</td>
+  tbody.innerHTML = clients.map(c => `
+    <tr>
+      <td><strong>${esc(c.name || c.client)}</strong>${c.name ? `<div class="mono field-hint">${esc(c.client)}</div>` : ''}</td>
       <td>${c.total_requests.toLocaleString()}</td>
-      <td>${c.blocked_requests.toLocaleString()}</td>
-      <td><span class="badge custom">${c.block_rate_percent.toFixed(1)}%</span></td>
-      <td style="color:var(--muted);font-size:12px;">${escapeHtml(seen)}</td>
-      <td><button class="sm" onclick="renameClient('${escapeHtml(c.client)}', '${escapeHtml(c.name || '')}')">Rename</button></td>
-    </tr>`;
-  }).join('');
+      <td class="c-red">${c.blocked_requests.toLocaleString()}</td>
+      <td>${c.block_rate_percent.toFixed(1)}%</td>
+      <td class="field-hint">${new Date(c.last_seen).toLocaleTimeString()}</td>
+      <td class="row">
+        <button class="sm" onclick="renameClient('${esc(c.client)}','${esc(c.name || '')}')">Rename</button>
+        <button class="sm" onclick="filterLogsByClient('${esc(c.client)}')">Logs</button>
+      </td>
+    </tr>
+  `).join('');
 }
 
-async function renameClient(client, currentName) {
-  const name = prompt(`Friendly name for ${client} (leave empty to clear):`, currentName);
+async function renameClient(ip, current) {
+  const name = prompt(`Friendly name for ${ip} (leave blank to clear):`, current);
   if (name === null) return;
   await apiFetch('/api/clients/name', {
     method: 'PUT',
     headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify({ client, name: name.trim() })
+    body: JSON.stringify({ client: ip, name: name.trim() })
   });
-  loadClients();
   toast('Device name updated');
-}
-
-async function loadStats() {
-  const resp = await apiFetch('/api/stats');
-  if (!resp.ok) return;
-  const st = await resp.json();
-  document.getElementById('m-ads').textContent = st.ads_blocked.toLocaleString();
-  document.getElementById('m-trackers').textContent = st.trackers_blocked.toLocaleString();
-  const osTel = st.windows_telemetry_blocked + st.macos_telemetry_blocked;
-  document.getElementById('m-telemetry').textContent = osTel.toLocaleString();
-  document.getElementById('m-telemetry-sub').textContent =
-    `Windows: ${st.windows_telemetry_blocked} · macOS: ${st.macos_telemetry_blocked}`;
-  document.getElementById('m-rate').textContent = st.block_rate_percent.toFixed(1) + '%';
-  document.getElementById('m-total').textContent =
-    `${st.total_blocked.toLocaleString()} / ${st.total_requests.toLocaleString()} requests blocked`;
-
-  const tbody = document.getElementById('top-domains-body');
-  if (!st.top_blocked_domains.length) {
-    tbody.innerHTML = '<tr><td colspan="3" style="color:var(--muted)">No blocked domains yet.</td></tr>';
-  } else {
-    tbody.innerHTML = st.top_blocked_domains.map(d => `
-      <tr>
-        <td class="mono">${escapeHtml(d.domain)}</td>
-        <td><span class="badge ${d.category}">${d.category}</span></td>
-        <td>${d.count.toLocaleString()}</td>
-      </tr>
-    `).join('');
-  }
-}
-
-async function loadLogs() {
-  const resp = await apiFetch('/api/logs');
-  if (!resp.ok) return;
-  logs = await resp.json();
-  renderLogs();
-}
-
-function renderLogs() {
-  const q = document.getElementById('log-search').value.trim().toLowerCase();
-  const mode = document.getElementById('log-filter').value;
-  const filtered = logs.filter(e => {
-    if (q && !e.domain.toLowerCase().includes(q)) return false;
-    if (mode !== 'all' && e.decision.action !== mode) return false;
-    return true;
-  }).slice(0, 120);
-
-  document.getElementById('logs-body').innerHTML = filtered.map(e => {
-    const t = new Date(e.timestamp).toLocaleTimeString();
-    const isBlock = e.decision.action === 'block';
-    const badge = isBlock
-      ? `<span class="badge ${e.decision.category}">Blocked (${e.decision.category})</span>`
-      : `<span class="badge allow">Allowed</span>`;
-    const btn = isBlock
-      ? `<button class="sm" onclick="quickRule('allow','${escapeHtml(e.domain)}')">Allow</button>`
-      : `<button class="sm danger" onclick="quickRule('deny','${escapeHtml(e.domain)}')">Block</button>`;
-    return `<tr>
-      <td class="mono" style="color:var(--muted)">${t}</td>
-      <td><span class="badge">${e.protocol.toUpperCase()}</span></td>
-      <td class="mono">${escapeHtml(e.domain)}</td>
-      <td>${badge}</td>
-      <td>${btn}</td>
-    </tr>`;
-  }).join('');
-}
-
-async function quickRule(kind, domain) {
-  await apiFetch('/api/rules/' + kind, {
-    method: 'POST', headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify({ domain })
-  });
-  toast(`${kind === 'allow' ? 'Allowed' : 'Blocked'} ${domain}`);
-  loadStatus();
-}
-
-async function pauseFor(seconds) {
-  await apiFetch('/api/pause', {
-    method: 'POST', headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify({ seconds })
-  });
-  toast(seconds > 0 ? `Paused for ${seconds/60} minutes` : 'Protection resumed');
-  loadStatus();
-}
-
-async function resetStats() {
-  await apiFetch('/api/stats/reset', { method: 'POST' });
-  logs = [];
-  renderLogs();
-  loadStats();
   loadClients();
-  toast('Statistics reset');
 }
 
-async function loadLists() {
-  const resp = await apiFetch('/api/lists');
-  if (!resp.ok) return;
-  const lists = await resp.json();
-  document.getElementById('lists-body').innerHTML = lists.map(l => {
-    const upd = l.last_updated ? new Date(l.last_updated).toLocaleString() : 'Never';
-    return `
-    <tr>
-      <td><input type="checkbox" ${l.enabled ? 'checked' : ''} onchange="toggleList('${l.id}', this.checked)" /></td>
-      <td><strong>${escapeHtml(l.name)}</strong><div class="mono" style="color:var(--muted);font-size:11px;">${escapeHtml(l.url)}</div></td>
-      <td><span class="badge ${l.category}">${l.category}</span></td>
-      <td>${l.rule_count.toLocaleString()}</td>
-      <td style="color:var(--muted);font-size:12px;">${escapeHtml(upd)}</td>
-      <td><button class="sm danger" onclick="deleteList('${l.id}')">Remove</button></td>
-    </tr>`;
-  }).join('');
+function filterLogsByClient(ip) {
+  document.getElementById('log-search').value = ip;
+  navTo('logs');
+  renderLogs();
 }
 
-async function toggleList(id, enabled) {
-  await apiFetch('/api/lists/' + encodeURIComponent(id), {
-    method: 'PATCH', headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify({ enabled })
-  });
-  loadStatus();
-}
-
-async function deleteList(id) {
-  await apiFetch('/api/lists/' + encodeURIComponent(id), { method: 'DELETE' });
-  loadLists(); loadStatus();
-}
-
-async function addList() {
-  const name = document.getElementById('new-list-name').value.trim();
-  const url = document.getElementById('new-list-url').value.trim();
-  const category = document.getElementById('new-list-cat').value;
-  if (!name || !url) return;
-  await apiFetch('/api/lists', {
-    method: 'POST', headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify({ name, url, category })
-  });
-  document.getElementById('new-list-name').value = '';
-  document.getElementById('new-list-url').value = '';
-  loadLists();
-  toast('List added — click Update All Lists to download');
-}
-
-async function updateAllLists() {
-  const btn = document.getElementById('btn-update-lists');
-  btn.disabled = true; btn.textContent = 'Updating...';
-  try {
-    const resp = await apiFetch('/api/lists/update', { method: 'POST' });
-    if (!resp.ok) return;
-    const res = await resp.json();
-    const nm = res.not_modified_lists ? `, ${res.not_modified_lists} unchanged` : '';
-    toast(`Updated ${res.updated_lists} lists${nm} (${res.active_rules.toLocaleString()} rules active)`);
-    loadLists(); loadStatus();
-  } finally {
-    btn.disabled = false; btn.textContent = 'Update All Lists';
-  }
-}
-
-async function loadRules() {
-  const resp = await apiFetch('/api/rules');
-  if (!resp.ok) return;
-  const r = await resp.json();
-  document.getElementById('denylist-items').innerHTML = r.denylist.map(d =>
-    `<div class="row" style="justify-content:space-between;padding:6px 0;border-bottom:1px solid var(--border);">
-      <span class="mono">${escapeHtml(d)}</span>
-      <button class="sm" onclick="removeRule('${escapeHtml(d)}')">Remove</button>
-    </div>`
-  ).join('') || '<div style="color:var(--muted);font-size:13px;">None</div>';
-  document.getElementById('allowlist-items').innerHTML = r.allowlist.map(d =>
-    `<div class="row" style="justify-content:space-between;padding:6px 0;border-bottom:1px solid var(--border);">
-      <span class="mono">${escapeHtml(d)}</span>
-      <button class="sm" onclick="removeRule('${escapeHtml(d)}')">Remove</button>
-    </div>`
-  ).join('') || '<div style="color:var(--muted);font-size:13px;">None</div>';
-}
-
-async function addRule(kind) {
-  const input = document.getElementById(kind === 'deny' ? 'deny-input' : 'allow-input');
-  const domain = input.value.trim();
-  if (!domain) return;
-  await quickRule(kind, domain);
-  input.value = '';
-  loadRules();
-}
-
-async function removeRule(domain) {
-  await apiFetch('/api/rules', {
-    method: 'DELETE', headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify({ domain })
-  });
-  loadRules(); loadStatus();
-}
-
-async function loadSettings() {
-  const resp = await apiFetch('/api/settings');
-  if (!resp.ok) return;
-  const s = await resp.json();
-  document.getElementById('s-mode').value = s.upstream_mode;
-  document.getElementById('s-addr').value = s.upstream_addr || '';
-  document.getElementById('s-sysproxy').checked = !!s.system_proxy_enabled;
-  document.getElementById('s-sysdns').checked = !!s.system_dns_enabled;
-  document.getElementById('s-autoupdate').checked = s.auto_update_enabled !== false;
-  document.getElementById('s-interval').value = s.auto_update_interval_hours || 24;
-  document.getElementById('s-lanmode').checked = !!s.lan_mode;
-  document.getElementById('s-authenabled').checked = !!s.auth_enabled;
-  document.getElementById('s-authtoken').value = '';
-  document.getElementById('s-retention-days').value = s.log_retention_days ?? 7;
-  document.getElementById('s-retention-rows').value = s.log_max_rows ?? 50000;
-}
-
-function presetUpstream(mode, addr) {
-  document.getElementById('s-mode').value = mode;
-  document.getElementById('s-addr').value = addr;
-}
-
-async function saveSettings() {
-  const newTok = document.getElementById('s-authtoken').value.trim();
-  const payload = {
-    upstream_mode: document.getElementById('s-mode').value,
-    upstream_addr: document.getElementById('s-addr').value.trim(),
-    upstream_username: null,
-    upstream_password: null,
-    system_proxy_enabled: document.getElementById('s-sysproxy').checked,
-    system_dns_enabled: document.getElementById('s-sysdns').checked,
-    auto_update_enabled: document.getElementById('s-autoupdate').checked,
-    auto_update_interval_hours: Math.max(1, parseInt(document.getElementById('s-interval').value, 10) || 24),
-    lan_mode: document.getElementById('s-lanmode').checked,
-    auth_enabled: document.getElementById('s-authenabled').checked,
-    auth_token: newTok || null,
-    log_retention_days: Math.max(0, parseInt(document.getElementById('s-retention-days').value, 10) || 0),
-    log_max_rows: Math.max(0, parseInt(document.getElementById('s-retention-rows').value, 10) || 0),
-  };
-  const resp = await apiFetch('/api/settings', {
-    method: 'PUT', headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify(payload)
-  });
-  if (resp.ok) {
-    if (newTok) localStorage.setItem('aegis_token', newTok);
-    document.getElementById('s-authtoken').value = '';
-    toast('Settings saved & applied live');
-    loadStatus();
-  } else {
-    toast('Error saving settings');
-  }
-}
-
+// ==================== SYSTEM & BACKUP ====================
 async function pruneLogsNow() {
-  const resp = await apiFetch('/api/stats/prune', { method: 'POST' });
-  if (resp.ok) {
-    const res = await resp.json();
-    toast(`Pruned ${res.deleted_rows.toLocaleString()} rows (${res.remaining_rows.toLocaleString()} remaining)`);
-  } else {
-    toast('Failed to prune logs');
-  }
+  const res = await (await apiFetch('/api/stats/prune', { method: 'POST' })).json();
+  toast(`Pruned ${res.deleted_rows} rows (${res.remaining_rows.toLocaleString()} remaining)`);
 }
 
 async function exportConfig(format) {
   const resp = await apiFetch('/api/export?format=' + encodeURIComponent(format));
   if (!resp.ok) { toast('Export failed'); return; }
-  const text = await resp.text();
-  const blob = new Blob([text], { type: format === 'json' ? 'application/json' : 'application/toml' });
-  const url = URL.createObjectURL(blob);
+  const blob = await resp.blob();
   const a = document.createElement('a');
-  a.href = url;
+  a.href = URL.createObjectURL(blob);
   a.download = format === 'json' ? 'aegis-config.json' : 'aegis-config.toml';
   a.click();
-  URL.revokeObjectURL(url);
-  toast(`Exported ${a.download}`);
+  URL.revokeObjectURL(a.href);
+  toast('Exported ' + a.download);
 }
 
 async function importConfig() {
-  const fileInput = document.getElementById('import-file');
-  const file = fileInput.files && fileInput.files[0];
+  const file = document.getElementById('import-file').files[0];
   if (!file) { toast('Choose a .toml or .json file first'); return; }
   const content = await file.text();
-  const format = file.name.toLowerCase().endsWith('.json') ? 'json' : (file.name.toLowerCase().endsWith('.toml') ? 'toml' : 'auto');
   const mode = document.getElementById('import-mode').value;
+  const format = file.name.endsWith('.json') ? 'json' : file.name.endsWith('.toml') ? 'toml' : 'auto';
   const resp = await apiFetch('/api/import', {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify({ format, mode, content })
   });
-  const data = await resp.json().catch(() => ({}));
   if (resp.ok) {
-    toast(`Imported (${data.active_rules.toLocaleString()} active rules, ${data.lists_count} lists)`);
-    fileInput.value = '';
+    const res = await resp.json();
+    toast(`Imported (${res.active_rules.toLocaleString()} active rules)`);
     loadStatus(); loadSettings(); loadLists(); loadRules();
   } else {
-    toast(data.error || 'Import failed');
+    const err = await resp.json().catch(() => ({}));
+    toast('Import failed: ' + (err.error || resp.statusText));
   }
 }
 
-function escapeHtml(s) {
-  return String(s).replace(/[&<>"']/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
+// ==================== COMPACT OFFLINE QR CODE (SVG, Byte Mode v1-4, Level L) ====================
+function renderQrSvg(containerId, text) {
+  const el = document.getElementById(containerId);
+  if (!el) return;
+  try {
+    const m = generateQrMatrix(text);
+    const n = m.length;
+    const quiet = 2;
+    const size = n + quiet * 2;
+    let paths = '';
+    for (let r = 0; r < n; r++) {
+      for (let c = 0; c < n; c++) {
+        if (m[r][c]) paths += `M${c+quiet},${r+quiet}h1v1h-1z`;
+      }
+    }
+    el.innerHTML = `<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 ${size} ${size}" width="128" height="128" shape-rendering="crispEdges"><rect width="${size}" height="${size}" fill="#fff"/><path d="${paths}" fill="#0f172a"/></svg>`;
+  } catch (_) {
+    el.innerHTML = `<div style="width:128px;height:128px;display:grid;place-items:center;font-size:11px;color:#64748b;">URL too long for QR</div>`;
+  }
 }
 
-function connectWs() {
-  const proto = location.protocol === 'https:' ? 'wss:' : 'ws:';
-  const tok = getToken();
-  const q = tok ? `?token=${encodeURIComponent(tok)}` : '';
-  wsConn = new WebSocket(`${proto}//${location.host}/api/logs/ws${q}`);
-  wsConn.onmessage = (ev) => {
-    const item = JSON.parse(ev.data);
-    logs.unshift(item);
-    if (logs.length > 300) logs.pop();
-    renderLogs();
-    loadStats();
+function generateQrMatrix(str) {
+  const bytes = Array.from(new TextEncoder().encode(str));
+  // Capacity table for ECC Level L (versions 1..4): [totalCodewords, eccCodewords, alignCenter]
+  const specs = [
+    null,
+    [26, 7, []],
+    [44, 10, [18]],
+    [70, 15, [22]],
+    [100, 20, [26]]
+  ];
+  let ver = 1;
+  while (ver <= 4 && bytes.length + 2 > specs[ver][0] - specs[ver][1]) ver++;
+  if (ver > 4) throw new Error('too long');
+  const [totalCw, eccCw, aligns] = specs[ver];
+  const dataCw = totalCw - eccCw;
+
+  // Build bit stream: 0100 (Byte), len (8), data, terminator, pad
+  const bits = [];
+  const pushBits = (val, len) => { for (let i = len - 1; i >= 0; i--) bits.push((val >> i) & 1); };
+  pushBits(0b0100, 4);
+  pushBits(bytes.length, 8);
+  for (const b of bytes) pushBits(b, 8);
+  for (let i = 0; i < 4 && bits.length < dataCw * 8; i++) bits.push(0);
+  while (bits.length % 8 !== 0) bits.push(0);
+  const codewords = [];
+  for (let i = 0; i < bits.length; i += 8) {
+    let v = 0; for (let j = 0; j < 8; j++) v = (v << 1) | bits[i + j];
+    codewords.push(v);
+  }
+  const pads = [0xEC, 0x11];
+  for (let i = 0; codewords.length < dataCw; i++) codewords.push(pads[i & 1]);
+
+  // GF(256) Reed-Solomon ECC
+  const gfMul = (a, b) => {
+    let r = 0;
+    for (let i = 0; i < 8; i++) {
+      if (b & 1) r ^= a;
+      const hi = a & 0x80; a = (a << 1) & 0xFF; if (hi) a ^= 0x1D;
+      b >>= 1;
+    }
+    return r;
   };
-  wsConn.onclose = () => setTimeout(connectWs, 2500);
+  let gen = [1];
+  let root = 1;
+  for (let i = 0; i < eccCw; i++) {
+    const next = new Array(gen.length + 1).fill(0);
+    for (let j = 0; j < gen.length; j++) {
+      next[j] ^= gen[j];
+      next[j + 1] ^= gfMul(gen[j], root);
+    }
+    gen = next;
+    root = gfMul(root, 2);
+  }
+  const rem = new Array(eccCw).fill(0);
+  for (const cw of codewords) {
+    const factor = cw ^ rem.shift();
+    rem.push(0);
+    for (let j = 0; j < eccCw; j++) rem[j] ^= gfMul(gen[j + 1], factor);
+  }
+  const allCw = codewords.concat(rem);
+
+  const n = ver * 4 + 17;
+  const mat = Array.from({ length: n }, () => new Array(n).fill(false));
+  const func = Array.from({ length: n }, () => new Array(n).fill(false));
+  const setF = (r, c, v) => { if (r >= 0 && r < n && c >= 0 && c < n) { mat[r][c] = v; func[r][c] = true; } };
+
+  // Finder patterns
+  const drawFinder = (r0, c0) => {
+    for (let dr = -1; dr <= 7; dr++) for (let dc = -1; dc <= 7; dc++) {
+      const inside = dr >= 0 && dr <= 6 && dc >= 0 && dc <= 6;
+      const v = inside && (dr === 0 || dr === 6 || dc === 0 || dc === 6 || (dr >= 2 && dr <= 4 && dc >= 2 && dc <= 4));
+      setF(r0 + dr, c0 + dc, v);
+    }
+  };
+  drawFinder(0, 0); drawFinder(0, n - 7); drawFinder(n - 7, 0);
+  for (let i = 8; i < n - 8; i++) { setF(6, i, (i & 1) === 0); setF(i, 6, (i & 1) === 0); }
+  for (const a of aligns) {
+    for (let dr = -2; dr <= 2; dr++) for (let dc = -2; dc <= 2; dc++) {
+      setF(a + dr, a + dc, Math.max(Math.abs(dr), Math.abs(dc)) !== 1);
+    }
+  }
+  // Reserve format info (ECC L = 01, Mask 0 = 000 -> format bits 0x77C4)
+  const fmt = 0x77C4;
+  for (let i = 0; i <= 5; i++) setF(8, i, ((fmt >> (14 - i)) & 1) === 1);
+  setF(8, 7, ((fmt >> 8) & 1) === 1);
+  setF(8, 8, ((fmt >> 7) & 1) === 1);
+  setF(7, 8, ((fmt >> 6) & 1) === 1);
+  for (let i = 0; i <= 5; i++) setF(5 - i, 8, ((fmt >> (5 - i)) & 1) === 1);
+  for (let i = 0; i < 8; i++) setF(8, n - 1 - i, ((fmt >> i) & 1) === 1);
+  for (let i = 0; i < 7; i++) setF(n - 7 + i, 8, ((fmt >> (14 - i)) & 1) === 1);
+  setF(n - 8, 8, true);
+
+  // Place data bits (mask 0: (r + c) % 2 === 0)
+  let bitIdx = 0;
+  let up = true;
+  for (let col = n - 1; col >= 1; col -= 2) {
+    if (col === 6) col = 5;
+    for (let step = 0; step < n; step++) {
+      const r = up ? n - 1 - step : step;
+      for (const c of [col, col - 1]) {
+        if (!func[r][c]) {
+          const bit = bitIdx < allCw.length * 8 ? ((allCw[bitIdx >> 3] >> (7 - (bitIdx & 7))) & 1) === 1 : false;
+          bitIdx++;
+          mat[r][c] = ((r + c) % 2 === 0) ? !bit : bit;
+        }
+      }
+    }
+    up = !up;
+  }
+  return mat;
 }
 
-let statsTimer = null;
+// Keyboard shortcut '/' to focus search in Live Activity
+document.addEventListener('keydown', (e) => {
+  if (e.key === '/' && document.activeElement.tagName !== 'INPUT' && document.activeElement.tagName !== 'TEXTAREA') {
+    const logsTab = document.getElementById('tab-logs');
+    if (logsTab.classList.contains('active')) {
+      e.preventDefault();
+      document.getElementById('log-search').focus();
+    }
+  }
+});
+
 function initDashboard() {
   loadStatus();
   loadStats();
+  loadTimeline();
   loadLogs();
+  loadSettings();
   connectWs();
-  if (!statsTimer) statsTimer = setInterval(loadStats, 5000);
+  setInterval(() => { loadStatus(); loadStats(); loadTimeline(); }, 15000);
 }
 
 (async function boot() {
+  initTheme();
   try {
-    const res = await (await apiFetch('/api/auth/status')).json();
-    if (res.auth_enabled && !res.authenticated) {
-      document.getElementById('auth-modal').classList.add('open');
+    const auth = await (await apiFetch('/api/auth/status')).json();
+    document.getElementById('btn-logout').style.display = auth.auth_enabled ? 'inline-flex' : 'none';
+    if (auth.auth_enabled && !auth.authenticated) {
+      showAuthDialog();
       return;
     }
-    document.getElementById('btn-logout').style.display = res.auth_enabled ? 'inline-block' : 'none';
   } catch (_) {}
   initDashboard();
 })();

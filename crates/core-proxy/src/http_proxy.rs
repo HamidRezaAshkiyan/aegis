@@ -1,6 +1,7 @@
-use crate::upstream::connect_outbound;
+use crate::anti_dpi::{obfuscate_http_host_header, relay_tunnel, should_bypass};
+use crate::upstream::{connect_outbound, is_direct_route};
 use chrono::Utc;
-use core_engine::{FilterDecision, FilterEngine, ProxyConfig};
+use core_engine::{AntiDpiConfig, FilterDecision, FilterEngine, ProxyConfig};
 use core_stats::{StatsStore, TrafficEvent, TrafficProtocol};
 use std::net::SocketAddr;
 use std::sync::{Arc, RwLock};
@@ -12,6 +13,7 @@ use tracing::{debug, info};
 
 pub struct HttpProxyServer {
     config: Arc<RwLock<ProxyConfig>>,
+    anti_dpi: Arc<RwLock<AntiDpiConfig>>,
     engine: Arc<FilterEngine>,
     stats: Arc<StatsStore>,
 }
@@ -19,11 +21,13 @@ pub struct HttpProxyServer {
 impl HttpProxyServer {
     pub fn new(
         config: Arc<RwLock<ProxyConfig>>,
+        anti_dpi: Arc<RwLock<AntiDpiConfig>>,
         engine: Arc<FilterEngine>,
         stats: Arc<StatsStore>,
     ) -> Self {
         Self {
             config,
+            anti_dpi,
             engine,
             stats,
         }
@@ -123,6 +127,7 @@ impl HttpProxyServer {
             }
 
             let cfg = self.config.read().unwrap().clone();
+            let direct = is_direct_route(&cfg, &host);
             let mut outbound = match connect_outbound(&cfg, &host, port).await {
                 Ok(s) => s,
                 Err(_) => {
@@ -136,7 +141,7 @@ impl HttpProxyServer {
             self.stats.record(TrafficEvent {
                 timestamp: Utc::now(),
                 protocol: TrafficProtocol::Https,
-                domain: host,
+                domain: host.clone(),
                 client: peer.ip().to_string(),
                 decision: FilterDecision::Allow,
                 latency_ms,
@@ -145,10 +150,13 @@ impl HttpProxyServer {
             client
                 .write_all(b"HTTP/1.1 200 Connection Established\r\n\r\n")
                 .await?;
-            if header_end < header_buf.len() {
-                outbound.write_all(&header_buf[header_end..]).await?;
-            }
-            let _ = tokio::io::copy_bidirectional(&mut client, &mut outbound).await;
+            let dpi_cfg = self.anti_dpi.read().unwrap().clone();
+            let buffered = if header_end < header_buf.len() {
+                &header_buf[header_end..]
+            } else {
+                &[]
+            };
+            relay_tunnel(&mut client, &mut outbound, buffered, &dpi_cfg, &host, direct).await;
             return Ok(());
         }
 
@@ -181,6 +189,7 @@ impl HttpProxyServer {
         }
 
         let cfg = self.config.read().unwrap().clone();
+        let direct = is_direct_route(&cfg, &host);
         let mut outbound = match connect_outbound(&cfg, &host, port).await {
             Ok(s) => s,
             Err(_) => {
@@ -194,14 +203,22 @@ impl HttpProxyServer {
         self.stats.record(TrafficEvent {
             timestamp: Utc::now(),
             protocol: TrafficProtocol::Http,
-            domain: host,
+            domain: host.clone(),
             client: peer.ip().to_string(),
             decision: FilterDecision::Allow,
             latency_ms,
         });
 
         // Rewrite absolute-form URI (http://host/path -> /path) for origin server
-        let rewritten = rewrite_http_request(&header_buf[..header_end], method, target);
+        let mut rewritten = rewrite_http_request(&header_buf[..header_end], method, target);
+        let dpi_cfg = self.anti_dpi.read().unwrap().clone();
+        if direct
+            && dpi_cfg.enabled
+            && dpi_cfg.http_host_mix_case
+            && !should_bypass(&host, &dpi_cfg.bypass_domains)
+        {
+            rewritten = obfuscate_http_host_header(&rewritten);
+        }
         outbound.write_all(&rewritten).await?;
         if header_end < header_buf.len() {
             outbound.write_all(&header_buf[header_end..]).await?;

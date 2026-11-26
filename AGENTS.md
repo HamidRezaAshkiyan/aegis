@@ -1,7 +1,7 @@
 # AGENTS.md — Aegis
 
 ## Overview
-**Aegis** is a lightweight, cross-platform (macOS, Windows, Linux/Docker) system-wide ad, tracker, and OS telemetry blocker written in Rust (`v0.2.2`). It combines a local DNS server (UDP/DoH upstream with CNAME cloaking defense), HTTP/HTTPS and SOCKS5 proxies with optional upstream VPN/proxy chaining, SQLite traffic analytics, crash-safe OS proxy/DNS integration, a native system tray/menu bar icon, and an embedded real-time WebSocket web dashboard.
+**Aegis** is a lightweight, cross-platform (macOS, Windows, Linux/Docker) system-wide ad, tracker, and malware blocker written in Rust (`v1.0.0`). It combines a hot-reloadable local UDP DNS & RFC 8484 DoH server (with upstream DoH-over-proxy & CNAME cloaking defense), HTTP/HTTPS and SOCKS5 proxies with pure-Rust Anti-DPI (TLS ClientHello SNI fragmentation) and upstream VPN/proxy chaining (with local proxy scanner & bypass rules), SQLite traffic analytics, crash-safe OS proxy/DNS integration, a native system tray/menu bar icon, one-step PC/Mac/Phone Quick Setup (`/proxy.pac`, `.sh`/`.ps1` scripts, offline QR), and a modern real-time WebSocket web dashboard.
 
 ## Tech Stack & Requirements
 - **Language / Toolchain:** Rust (Edition 2021), Cargo workspace (`resolver = "2"`).

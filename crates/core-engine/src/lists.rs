@@ -37,6 +37,57 @@ pub fn normalize_domain(raw: &str) -> Option<String> {
     Some(s)
 }
 
+/// Check whether an Adblock `$options` string is safe for whole-domain DNS/proxy blocking.
+/// Rules with browser-only or scoped modifiers (`$third-party`, `$domain=...`, `$script`,
+/// `$ping`, `$image`, `$xmlhttprequest`, `$badfilter`, etc.) must NOT be converted into
+/// global domain blocks because they cause severe false positives.
+fn is_dns_safe_adblock_options(opts: &str) -> bool {
+    let trimmed = opts.trim();
+    if trimmed.is_empty() {
+        return true;
+    }
+    for part in trimmed.split(',') {
+        let opt = part.trim().to_ascii_lowercase();
+        if opt.is_empty() {
+            continue;
+        }
+        // Only allow pure DNS-compatible global modifiers
+        if matches!(opt.as_str(), "important" | "all") {
+            continue;
+        }
+        return false;
+    }
+    true
+}
+
+/// Extract a pure whole-domain target from an Adblock `||...` rule body.
+/// Rejects path-scoped rules (`/ads.js`), wildcard rules (`*`), and rules with
+/// non-DNS `$options` so browser filter lists never over-block legitimate domains.
+fn extract_dns_safe_adblock_domain(rest: &str) -> Option<String> {
+    let (pattern, opts) = match rest.split_once('$') {
+        Some((p, o)) => (p, Some(o)),
+        None => (rest, None),
+    };
+
+    if let Some(o) = opts {
+        if !is_dns_safe_adblock_options(o) {
+            return None;
+        }
+    }
+
+    // Reject wildcards or URL paths that are not pure domain rules
+    if pattern.contains('*') || pattern.contains('?') || pattern.contains('|') {
+        return None;
+    }
+
+    let cleaned = pattern.trim_end_matches('^');
+    if cleaned.contains('/') || cleaned.contains('^') {
+        return None;
+    }
+
+    normalize_domain(cleaned)
+}
+
 /// Parse a filter list supporting Adblock/AdGuard (`||domain^`, `@@||domain^`),
 /// Hosts (`0.0.0.0 domain`), and plain domain list formats.
 pub fn parse_filter_list(content: &str) -> ParsedRules {
@@ -59,11 +110,7 @@ pub fn parse_filter_list(content: &str) -> ParsedRules {
 
         // Adblock exception rule: @@||domain.com^
         if let Some(rest) = line.strip_prefix("@@||") {
-            let domain_part = rest
-                .split(['^', '/', '$', '*'])
-                .next()
-                .unwrap_or_default();
-            if let Some(domain) = normalize_domain(domain_part) {
+            if let Some(domain) = extract_dns_safe_adblock_domain(rest) {
                 allowed.push(domain);
             }
             continue;
@@ -71,16 +118,7 @@ pub fn parse_filter_list(content: &str) -> ParsedRules {
 
         // Adblock domain rule: ||domain.com^
         if let Some(rest) = line.strip_prefix("||") {
-            // Skip path-specific rules for pure domain matching unless they end with ^ or $
-            let before_opts = rest.split('$').next().unwrap_or(rest);
-            if before_opts.contains('/') && !before_opts.ends_with('/') {
-                continue;
-            }
-            let domain_part = before_opts
-                .split(['^', '/', '*'])
-                .next()
-                .unwrap_or_default();
-            if let Some(domain) = normalize_domain(domain_part) {
+            if let Some(domain) = extract_dns_safe_adblock_domain(rest) {
                 blocked.push(domain);
             }
             continue;
@@ -117,6 +155,7 @@ pub fn parse_filter_list(content: &str) -> ParsedRules {
 
 /// Built-in offline baseline rules so Aegis immediately protects against
 /// top ad networks, trackers, Windows telemetry, and macOS telemetry even offline.
+/// Kept conservative to avoid false positives on legitimate apps.
 pub fn builtin_baseline_rules() -> Vec<(BlockCategory, &'static str, &'static str)> {
     vec![
         // Ads
@@ -139,9 +178,7 @@ pub fn builtin_baseline_rules() -> Vec<(BlockCategory, &'static str, &'static st
         (BlockCategory::Tracker, "mixpanel.com", "Built-in Baseline"),
         (BlockCategory::Tracker, "segment.io", "Built-in Baseline"),
         (BlockCategory::Tracker, "amplitude.com", "Built-in Baseline"),
-        (BlockCategory::Tracker, "sentry.io", "Built-in Baseline"),
         (BlockCategory::Tracker, "scorecardresearch.com", "Built-in Baseline"),
-        (BlockCategory::Tracker, "facebook.net", "Built-in Baseline"),
         (BlockCategory::Tracker, "pixel.facebook.com", "Built-in Baseline"),
         (BlockCategory::Tracker, "clarity.ms", "Built-in Baseline"),
         // Windows Telemetry

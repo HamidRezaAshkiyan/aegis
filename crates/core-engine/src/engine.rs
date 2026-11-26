@@ -71,7 +71,9 @@ impl FilterEngine {
     /// Rebuild the in-memory lookup tables from config + cached filter lists on disk.
     pub fn reload_from_config(&self, config: &AegisConfig, data_dir: &Path) -> usize {
         let mut next = EngineState::default();
-        Self::insert_baseline(&mut next);
+        if config.baseline_rules_enabled {
+            Self::insert_baseline(&mut next);
+        }
 
         // Preserve pause state across reloads
         if let Ok(guard) = self.state.read() {

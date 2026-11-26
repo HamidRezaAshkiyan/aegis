@@ -40,13 +40,107 @@ impl Default for UpstreamMode {
     }
 }
 
+#[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(rename_all = "snake_case")]
+pub enum AntiDpiMode {
+    /// Splits the TLS ClientHello handshake record into 2+ RFC-compliant TLS records.
+    TlsRecordSplit,
+    /// Sends the TLS ClientHello in small TCP segments with TCP_NODELAY.
+    TcpChunk,
+    /// Applies both TLS record splitting and TCP chunking.
+    Both,
+}
+
+impl Default for AntiDpiMode {
+    fn default() -> Self {
+        Self::TlsRecordSplit
+    }
+}
+
+#[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(rename_all = "snake_case")]
+pub enum ProtectionProfile {
+    /// Built-in ad baseline only, zero breakage.
+    Minimal,
+    /// HaGeZi Multi Normal + Threat Intelligence Mini (recommended daily driver).
+    Balanced,
+    /// HaGeZi Multi PRO + Threat Intelligence + Windows/Apple OS telemetry.
+    Strict,
+}
+
+fn default_true() -> bool {
+    true
+}
+
+fn default_anti_dpi_chunk_size() -> usize {
+    40
+}
+
+fn default_anti_dpi_delay_ms() -> u64 {
+    2
+}
+
+fn default_upstream_bypass() -> Vec<String> {
+    vec![
+        "localhost".to_string(),
+        "local".to_string(),
+        "lan".to_string(),
+        "internal".to_string(),
+    ]
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct AntiDpiConfig {
+    #[serde(default)]
+    pub enabled: bool,
+    #[serde(default)]
+    pub mode: AntiDpiMode,
+    /// Parse the TLS ClientHello SNI extension and split directly inside the hostname.
+    #[serde(default = "default_true")]
+    pub split_at_sni: bool,
+    /// Chunk size (bytes) used for TCP chunking or fallback TLS split offset.
+    #[serde(default = "default_anti_dpi_chunk_size")]
+    pub chunk_size: usize,
+    /// Inter-chunk delay in milliseconds (0-50ms).
+    #[serde(default = "default_anti_dpi_delay_ms")]
+    pub delay_ms: u64,
+    /// Randomize `Host:` header casing (`hOsT:`) for plain HTTP requests.
+    #[serde(default)]
+    pub http_host_mix_case: bool,
+    /// Domains that should bypass Anti-DPI fragmentation.
+    #[serde(default)]
+    pub bypass_domains: Vec<String>,
+}
+
+impl Default for AntiDpiConfig {
+    fn default() -> Self {
+        Self {
+            enabled: false,
+            mode: AntiDpiMode::TlsRecordSplit,
+            split_at_sni: true,
+            chunk_size: default_anti_dpi_chunk_size(),
+            delay_ms: default_anti_dpi_delay_ms(),
+            http_host_mix_case: false,
+            bypass_domains: Vec::new(),
+        }
+    }
+}
+
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct DnsConfig {
+    #[serde(default = "default_true")]
     pub enabled: bool,
     pub listen_addr: String,
     /// Upstream DNS: either an IP:port (e.g. "1.1.1.1:53") or a DoH URL (e.g. "https://1.1.1.1/dns-query")
     pub upstream: String,
+    #[serde(default = "default_true")]
     pub cname_uncloaking: bool,
+    /// Expose an RFC 8484 local DNS-over-HTTPS endpoint at `/dns-query` on the API port.
+    #[serde(default = "default_true")]
+    pub doh_server_enabled: bool,
+    /// Route upstream DoH requests through the configured upstream SOCKS5/HTTP proxy.
+    #[serde(default)]
+    pub use_upstream_proxy: bool,
 }
 
 impl Default for DnsConfig {
@@ -56,21 +150,32 @@ impl Default for DnsConfig {
             listen_addr: "127.0.0.1:5353".to_string(),
             upstream: "https://1.1.1.1/dns-query".to_string(),
             cname_uncloaking: true,
+            doh_server_enabled: true,
+            use_upstream_proxy: false,
         }
     }
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct ProxyConfig {
+    #[serde(default = "default_true")]
     pub http_enabled: bool,
     pub http_listen: String,
+    #[serde(default = "default_true")]
     pub socks5_enabled: bool,
     pub socks5_listen: String,
+    #[serde(default)]
     pub upstream_mode: UpstreamMode,
     /// Upstream proxy address when chaining with Clash/V2Ray/Sing-box/VPN (e.g. "127.0.0.1:7890")
+    #[serde(default)]
     pub upstream_addr: String,
+    #[serde(default)]
     pub upstream_username: Option<String>,
+    #[serde(default)]
     pub upstream_password: Option<String>,
+    /// Domains or suffixes that bypass the upstream proxy and connect Direct.
+    #[serde(default = "default_upstream_bypass")]
+    pub upstream_bypass: Vec<String>,
 }
 
 impl Default for ProxyConfig {
@@ -84,6 +189,7 @@ impl Default for ProxyConfig {
             upstream_addr: String::new(),
             upstream_username: None,
             upstream_password: None,
+            upstream_bypass: default_upstream_bypass(),
         }
     }
 }
@@ -161,6 +267,10 @@ pub struct AegisConfig {
     pub proxy: ProxyConfig,
     #[serde(default)]
     pub api: ApiConfig,
+    #[serde(default)]
+    pub anti_dpi: AntiDpiConfig,
+    #[serde(default = "default_true")]
+    pub baseline_rules_enabled: bool,
     #[serde(default = "default_filter_lists")]
     pub lists: Vec<FilterListConfig>,
     #[serde(default)]
@@ -185,12 +295,13 @@ pub struct AegisConfig {
     pub log_max_rows: u64,
 }
 
+/// Safe-by-default DNS blocklists designed for near-zero false positives.
 pub fn default_filter_lists() -> Vec<FilterListConfig> {
     vec![
         FilterListConfig {
-            id: "hagezi-pro".to_string(),
-            name: "HaGeZi Multi PRO (Ads & Trackers)".to_string(),
-            url: "https://raw.githubusercontent.com/hagezi/dns-blocklists/main/adblock/pro.txt"
+            id: "hagezi-normal".to_string(),
+            name: "HaGeZi Multi Normal (Balanced Ads & Trackers)".to_string(),
+            url: "https://raw.githubusercontent.com/hagezi/dns-blocklists/main/adblock/multi.txt"
                 .to_string(),
             category: BlockCategory::Ad,
             enabled: true,
@@ -200,11 +311,11 @@ pub fn default_filter_lists() -> Vec<FilterListConfig> {
             last_modified: None,
         },
         FilterListConfig {
-            id: "hagezi-windows".to_string(),
-            name: "HaGeZi Windows & Office Telemetry".to_string(),
-            url: "https://raw.githubusercontent.com/hagezi/dns-blocklists/main/adblock/native.winoffice.txt"
+            id: "hagezi-tif-mini".to_string(),
+            name: "HaGeZi Threat Intelligence Mini (Malware & Phishing)".to_string(),
+            url: "https://raw.githubusercontent.com/hagezi/dns-blocklists/main/adblock/tif.mini.txt"
                 .to_string(),
-            category: BlockCategory::WindowsTelemetry,
+            category: BlockCategory::Malware,
             enabled: true,
             rule_count: 0,
             last_updated: None,
@@ -212,12 +323,12 @@ pub fn default_filter_lists() -> Vec<FilterListConfig> {
             last_modified: None,
         },
         FilterListConfig {
-            id: "hagezi-apple".to_string(),
-            name: "HaGeZi Apple / macOS Telemetry".to_string(),
-            url: "https://raw.githubusercontent.com/hagezi/dns-blocklists/main/adblock/native.apple.txt"
+            id: "hagezi-pro".to_string(),
+            name: "HaGeZi Multi PRO (Strict Ads & Trackers)".to_string(),
+            url: "https://raw.githubusercontent.com/hagezi/dns-blocklists/main/adblock/pro.txt"
                 .to_string(),
-            category: BlockCategory::MacOSTelemetry,
-            enabled: true,
+            category: BlockCategory::Ad,
+            enabled: false,
             rule_count: 0,
             last_updated: None,
             etag: None,
@@ -235,11 +346,24 @@ pub fn default_filter_lists() -> Vec<FilterListConfig> {
             last_modified: None,
         },
         FilterListConfig {
-            id: "easyprivacy".to_string(),
-            name: "EasyPrivacy Trackers".to_string(),
-            url: "https://easylist.to/easylist/easyprivacy.txt".to_string(),
-            category: BlockCategory::Tracker,
-            enabled: true,
+            id: "hagezi-windows".to_string(),
+            name: "HaGeZi Windows & Office Telemetry".to_string(),
+            url: "https://raw.githubusercontent.com/hagezi/dns-blocklists/main/adblock/native.winoffice.txt"
+                .to_string(),
+            category: BlockCategory::WindowsTelemetry,
+            enabled: false,
+            rule_count: 0,
+            last_updated: None,
+            etag: None,
+            last_modified: None,
+        },
+        FilterListConfig {
+            id: "hagezi-apple".to_string(),
+            name: "HaGeZi Apple / macOS Telemetry".to_string(),
+            url: "https://raw.githubusercontent.com/hagezi/dns-blocklists/main/adblock/native.apple.txt"
+                .to_string(),
+            category: BlockCategory::MacOSTelemetry,
+            enabled: false,
             rule_count: 0,
             last_updated: None,
             etag: None,
@@ -254,6 +378,8 @@ impl Default for AegisConfig {
             dns: DnsConfig::default(),
             proxy: ProxyConfig::default(),
             api: ApiConfig::default(),
+            anti_dpi: AntiDpiConfig::default(),
+            baseline_rules_enabled: true,
             lists: default_filter_lists(),
             allowlist: Vec::new(),
             denylist: Vec::new(),
@@ -297,5 +423,30 @@ impl AegisConfig {
         let content = toml::to_string_pretty(self)?;
         std::fs::write(path, content)?;
         Ok(())
+    }
+
+    /// Apply a built-in protection profile, ensuring preset lists exist and enabling
+    /// the appropriate subset while disabling overly aggressive lists like `easyprivacy`.
+    pub fn apply_profile(&mut self, profile: ProtectionProfile) {
+        for preset in default_filter_lists() {
+            if !self.lists.iter().any(|l| l.id == preset.id) {
+                self.lists.push(preset);
+            }
+        }
+
+        self.baseline_rules_enabled = true;
+
+        for list in &mut self.lists {
+            list.enabled = match profile {
+                ProtectionProfile::Minimal => list.id == "hagezi-tif-mini",
+                ProtectionProfile::Balanced => {
+                    matches!(list.id.as_str(), "hagezi-normal" | "hagezi-tif-mini")
+                }
+                ProtectionProfile::Strict => matches!(
+                    list.id.as_str(),
+                    "hagezi-pro" | "hagezi-tif-mini" | "hagezi-windows" | "hagezi-apple"
+                ),
+            };
+        }
     }
 }

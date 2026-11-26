@@ -10,10 +10,10 @@ members = [
 ]
 
 [workspace.package]
-version = "0.2.2"
+version = "1.0.0"
 edition = "2021"
 license = "MIT"
-description = "Aegis: Lightweight, open-source, system-wide ad & tracker blocker for Windows and macOS"
+description = "Aegis: Lightweight, open-source, system-wide ad & tracker blocker with DoH, Anti-DPI, and VPN chaining"
 
 [workspace.dependencies]
 tokio = { version = "1", features = ["full"] }
@@ -25,7 +25,7 @@ tracing-subscriber = { version = "0.3", features = ["env-filter"] }
 anyhow = "1"
 thiserror = "2"
 chrono = { version = "0.4", features = ["serde"] }
-reqwest = { version = "0.12", default-features = false, features = ["rustls-tls", "gzip", "deflate"] }
+reqwest = { version = "0.12", default-features = false, features = ["rustls-tls", "gzip", "deflate", "socks"] }
 hickory-proto = "0.24"
 rusqlite = { version = "0.32", features = ["bundled"] }
 axum = { version = "0.7", features = ["ws"] }

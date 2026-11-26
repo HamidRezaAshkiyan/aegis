@@ -6,6 +6,7 @@ use serde::{Deserialize, Serialize};
 #[serde(rename_all = "snake_case")]
 pub enum TrafficProtocol {
     Dns,
+    Doh,
     Http,
     Https,
     Socks5,
@@ -15,11 +16,19 @@ impl TrafficProtocol {
     pub fn as_str(&self) -> &'static str {
         match self {
             TrafficProtocol::Dns => "dns",
+            TrafficProtocol::Doh => "doh",
             TrafficProtocol::Http => "http",
             TrafficProtocol::Https => "https",
             TrafficProtocol::Socks5 => "socks5",
         }
     }
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct TimelineBucket {
+    pub hour: String,
+    pub total: u64,
+    pub blocked: u64,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]

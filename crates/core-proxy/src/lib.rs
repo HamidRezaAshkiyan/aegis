@@ -1,15 +1,19 @@
+pub mod anti_dpi;
 pub mod http_proxy;
 pub mod socks5_proxy;
 pub mod upstream;
 
 pub use http_proxy::HttpProxyServer;
 pub use socks5_proxy::Socks5ProxyServer;
-pub use upstream::connect_outbound;
+pub use upstream::{
+    connect_outbound, is_direct_route, scan_local_proxies, test_upstream, DetectedProxy,
+    UpstreamTestResult,
+};
 
 #[cfg(test)]
 mod tests {
     use super::*;
-    use core_engine::{FilterEngine, ProxyConfig, UpstreamMode};
+    use core_engine::{AntiDpiConfig, FilterEngine, ProxyConfig, UpstreamMode};
     use core_stats::StatsStore;
     use std::sync::{Arc, RwLock};
     use tokio::io::{AsyncReadExt, AsyncWriteExt};
@@ -21,8 +25,9 @@ mod tests {
         let engine = Arc::new(FilterEngine::new());
         let stats = Arc::new(StatsStore::in_memory().unwrap());
         let cfg = Arc::new(RwLock::new(ProxyConfig::default()));
+        let dpi = Arc::new(RwLock::new(AntiDpiConfig::default()));
 
-        let srv = Arc::new(HttpProxyServer::new(cfg, engine, Arc::clone(&stats)));
+        let srv = Arc::new(HttpProxyServer::new(cfg, dpi, engine, Arc::clone(&stats)));
         let listener = srv.bind("127.0.0.1:0").await.unwrap();
         let addr = listener.local_addr().unwrap();
 
@@ -63,8 +68,10 @@ mod tests {
         let upstream_engine = Arc::new(FilterEngine::new());
         let upstream_stats = Arc::new(StatsStore::in_memory().unwrap());
         let upstream_cfg = Arc::new(RwLock::new(ProxyConfig::default()));
+        let upstream_dpi = Arc::new(RwLock::new(AntiDpiConfig::default()));
         let upstream_srv = Arc::new(Socks5ProxyServer::new(
             upstream_cfg,
+            upstream_dpi,
             upstream_engine,
             upstream_stats,
         ));
@@ -80,8 +87,9 @@ mod tests {
         pcfg.upstream_mode = UpstreamMode::Socks5;
         pcfg.upstream_addr = upstream_addr.to_string();
         let cfg = Arc::new(RwLock::new(pcfg));
+        let dpi = Arc::new(RwLock::new(AntiDpiConfig::default()));
 
-        let srv = Arc::new(Socks5ProxyServer::new(cfg, engine, Arc::clone(&stats)));
+        let srv = Arc::new(Socks5ProxyServer::new(cfg, dpi, engine, Arc::clone(&stats)));
         let listener = srv.bind("127.0.0.1:0").await.unwrap();
         let addr = listener.local_addr().unwrap();
         let (tx, rx) = watch::channel(false);

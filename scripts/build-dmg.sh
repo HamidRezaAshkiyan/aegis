@@ -5,7 +5,7 @@ set -euo pipefail
 BIN_PATH="${1:-target/release/aegis}"
 ARCH_LABEL="${2:-arm64}"
 OUT_DMG="${3:-dist/Aegis-macos-${ARCH_LABEL}.dmg}"
-VERSION="${AEGIS_VERSION:-0.1.0}"
+VERSION="${AEGIS_VERSION:-1.0.0}"
 
 if [[ ! -f "$BIN_PATH" ]]; then
   echo "Error: binary not found at $BIN_PATH" >&2

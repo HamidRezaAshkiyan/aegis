@@ -1,4 +1,4 @@
-use crate::events::{ClientStats, DomainCount, StatsSummary, TrafficEvent};
+use crate::events::{ClientStats, DomainCount, StatsSummary, TimelineBucket, TrafficEvent};
 use core_engine::{BlockCategory, FilterDecision};
 use rusqlite::{params, Connection};
 use std::collections::VecDeque;
@@ -297,6 +297,54 @@ impl StatsStore {
             }
         }
         Ok(deleted)
+    }
+
+    pub fn timeline_hourly(&self, hours: u32) -> Vec<TimelineBucket> {
+        let hours = hours.clamp(1, 168);
+        let now = chrono::Utc::now();
+        let cutoff = (now - chrono::Duration::hours(hours as i64)).to_rfc3339();
+
+        let mut counts: std::collections::HashMap<String, (u64, u64)> =
+            std::collections::HashMap::new();
+
+        if let Ok(conn) = self.conn.lock() {
+            if let Ok(mut stmt) = conn.prepare(
+                "SELECT substr(timestamp, 1, 13) AS hr,
+                        COUNT(*) AS total,
+                        SUM(CASE WHEN action = 'block' THEN 1 ELSE 0 END) AS blocked
+                 FROM query_log
+                 WHERE timestamp >= ?1
+                 GROUP BY hr
+                 ORDER BY hr ASC",
+            ) {
+                if let Ok(rows) = stmt.query_map(params![cutoff], |row| {
+                    Ok((
+                        row.get::<_, String>(0)?,
+                        row.get::<_, i64>(1)?.max(0) as u64,
+                        row.get::<_, i64>(2)?.max(0) as u64,
+                    ))
+                }) {
+                    for (hr, total, blocked) in rows.flatten() {
+                        counts.insert(hr, (total, blocked));
+                    }
+                }
+            }
+        }
+
+        // Fill all `hours` slots chronologically so the chart always has a continuous axis
+        let mut out = Vec::with_capacity(hours as usize);
+        for offset in (0..hours).rev() {
+            let ts = now - chrono::Duration::hours(offset as i64);
+            let key = ts.format("%Y-%m-%dT%H").to_string();
+            let label = ts.format("%H:00").to_string();
+            let (total, blocked) = counts.get(&key).copied().unwrap_or((0, 0));
+            out.push(TimelineBucket {
+                hour: label,
+                total,
+                blocked,
+            });
+        }
+        out
     }
 
     pub fn reset_stats(&self) -> anyhow::Result<()> {

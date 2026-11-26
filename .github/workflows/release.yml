@@ -60,7 +60,7 @@ jobs:
           ARCH_LABEL="${{ matrix.asset_name }}"
           ARCH_LABEL="${ARCH_LABEL#aegis-macos-}"
           chmod +x scripts/build-dmg.sh
-          ./scripts/build-dmg.sh "target/${{ matrix.target }}/release/${{ matrix.bin }}" "$ARCH_LABEL" "dist/Aegis-macos-${ARCH_LABEL}.dmg"
+          AEGIS_VERSION="${GITHUB_REF_NAME#v}" ./scripts/build-dmg.sh "target/${{ matrix.target }}/release/${{ matrix.bin }}" "$ARCH_LABEL" "dist/Aegis-macos-${ARCH_LABEL}.dmg"
 
       - name: Package Windows archive & standalone EXE
         if: runner.os == 'Windows'

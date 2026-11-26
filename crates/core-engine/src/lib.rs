@@ -3,8 +3,8 @@ pub mod engine;
 pub mod lists;
 
 pub use config::{
-    apply_lan_bind, AegisConfig, ApiConfig, BlockCategory, DnsConfig, FilterListConfig,
-    ProxyConfig, UpstreamMode,
+    apply_lan_bind, default_filter_lists, AegisConfig, AntiDpiConfig, AntiDpiMode, ApiConfig,
+    BlockCategory, DnsConfig, FilterListConfig, ProtectionProfile, ProxyConfig, UpstreamMode,
 };
 pub use engine::{FilterDecision, FilterEngine};
 pub use lists::{download_list, parse_filter_list, ListDownloadOutcome, ParsedRules};
@@ -20,8 +20,13 @@ mod tests {
             # Another comment
             [Adblock Plus 2.0]
             ||ads.example.com^
+            ||important-ad.example.com^$important
             ||tracker.example.org^$third-party
+            ||scoped.example.net^$script,domain=news.com
+            ||wildcard.example.com*track
+            ||pathonly.example.com/ads.js
             @@||safe.ads.example.com^
+            @@||partial.example.com/ok.js
             0.0.0.0 telemetry.vendor.com
             127.0.0.1 localhost
             metrics.app.io
@@ -30,11 +35,40 @@ mod tests {
 
         let parsed = parse_filter_list(sample);
         assert!(parsed.blocked.contains(&"ads.example.com".to_string()));
-        assert!(parsed.blocked.contains(&"tracker.example.org".to_string()));
+        assert!(parsed.blocked.contains(&"important-ad.example.com".to_string()));
         assert!(parsed.blocked.contains(&"telemetry.vendor.com".to_string()));
         assert!(parsed.blocked.contains(&"metrics.app.io".to_string()));
         assert!(!parsed.blocked.contains(&"localhost".to_string()));
+        // Browser-scoped, wildcard, and path-only rules must NOT become whole-domain blocks
+        assert!(!parsed.blocked.contains(&"tracker.example.org".to_string()));
+        assert!(!parsed.blocked.contains(&"scoped.example.net".to_string()));
+        assert!(!parsed.blocked.contains(&"wildcard.example.com".to_string()));
+        assert!(!parsed.blocked.contains(&"pathonly.example.com".to_string()));
         assert!(parsed.allowed.contains(&"safe.ads.example.com".to_string()));
+        assert!(!parsed.allowed.contains(&"partial.example.com".to_string()));
+    }
+
+    #[test]
+    fn protection_profiles_and_baseline_toggle() {
+        let mut cfg = AegisConfig::default();
+        cfg.apply_profile(ProtectionProfile::Minimal);
+        assert!(cfg.lists.iter().find(|l| l.id == "hagezi-tif-mini").unwrap().enabled);
+        assert!(!cfg.lists.iter().find(|l| l.id == "hagezi-normal").unwrap().enabled);
+
+        cfg.apply_profile(ProtectionProfile::Balanced);
+        assert!(cfg.lists.iter().find(|l| l.id == "hagezi-normal").unwrap().enabled);
+        assert!(!cfg.lists.iter().find(|l| l.id == "hagezi-pro").unwrap().enabled);
+
+        cfg.apply_profile(ProtectionProfile::Strict);
+        assert!(cfg.lists.iter().find(|l| l.id == "hagezi-pro").unwrap().enabled);
+        assert!(cfg.lists.iter().find(|l| l.id == "hagezi-windows").unwrap().enabled);
+
+        // Disabling baseline rules removes built-in doubleclick rule
+        cfg.baseline_rules_enabled = false;
+        let engine = FilterEngine::new();
+        let tmp = std::env::temp_dir().join("aegis-empty-lists-test");
+        engine.reload_from_config(&cfg, &tmp);
+        assert_eq!(engine.check_domain("doubleclick.net"), FilterDecision::Allow);
     }
 
     #[test]

@@ -1,12 +1,12 @@
 mod api;
+mod services;
 mod tray;
 
 use api::{build_router, refresh_enabled_lists, AppState};
 use clap::{Parser, Subcommand};
-use core_dns::DnsServer;
 use core_engine::{download_list, AegisConfig, FilterEngine, ListDownloadOutcome};
-use core_proxy::{HttpProxyServer, Socks5ProxyServer};
 use core_stats::StatsStore;
+use services::ServiceManager;
 use std::path::PathBuf;
 use std::sync::{Arc, RwLock};
 use tokio::net::TcpListener;
@@ -14,7 +14,11 @@ use tokio::sync::watch;
 use tracing::{info, warn};
 
 #[derive(Parser, Debug)]
-#[command(name = "aegis", about = "Lightweight open-source system-wide ad & tracker blocker")]
+#[command(
+    name = "aegis",
+    version,
+    about = "Lightweight open-source system-wide ad & tracker blocker with DoH, Anti-DPI, and VPN chaining"
+)]
 struct Cli {
     /// Custom data directory for config, blocklists, and SQLite stats
     #[arg(long)]
@@ -23,6 +27,10 @@ struct Cli {
     /// Override local DNS listen address (e.g. 127.0.0.1:5353 or 127.0.0.1:53)
     #[arg(long)]
     dns_addr: Option<String>,
+
+    /// Disable the local UDP DNS listener on startup
+    #[arg(long, default_value_t = false)]
+    no_dns: bool,
 
     /// Override HTTP/HTTPS proxy listen address (e.g. 127.0.0.1:8080)
     #[arg(long)]
@@ -116,6 +124,9 @@ fn main() -> anyhow::Result<()> {
     let config_path = data_dir.join("config.toml");
     let mut config = AegisConfig::load_or_create(&config_path)?;
 
+    if cli.no_dns {
+        config.dns.enabled = false;
+    }
     if let Some(addr) = cli.dns_addr {
         config.dns.listen_addr = addr;
     }
@@ -138,9 +149,6 @@ fn main() -> anyhow::Result<()> {
         }
     }
 
-    let dns_bind = core_engine::apply_lan_bind(&config.dns.listen_addr, config.lan_mode);
-    let http_bind = core_engine::apply_lan_bind(&config.proxy.http_listen, config.lan_mode);
-    let socks5_bind = core_engine::apply_lan_bind(&config.proxy.socks5_listen, config.lan_mode);
     let api_bind = core_engine::apply_lan_bind(&config.api.listen_addr, config.lan_mode);
     let dashboard_url = format!(
         "http://{}",
@@ -156,13 +164,17 @@ fn main() -> anyhow::Result<()> {
     let http_client = reqwest::Client::builder()
         .user_agent(format!("AegisBlocker/{}", env!("CARGO_PKG_VERSION")))
         .build()?;
-    let proxy_config = Arc::new(RwLock::new(config.proxy.clone()));
+    let services = Arc::new(ServiceManager::new(
+        &config,
+        Arc::clone(&engine),
+        Arc::clone(&stats),
+    ));
 
     let app_state = Arc::new(AppState {
         config: RwLock::new(config),
         config_path,
         data_dir: data_dir.clone(),
-        proxy_config,
+        services,
         engine,
         stats,
         http_client,
@@ -183,9 +195,6 @@ fn main() -> anyhow::Result<()> {
                 if let Err(e) = rt.block_on(run_daemon(
                     daemon_state,
                     update_lists,
-                    dns_bind,
-                    http_bind,
-                    socks5_bind,
                     api_bind,
                     daemon_tx,
                     daemon_rx,
@@ -208,9 +217,6 @@ fn main() -> anyhow::Result<()> {
         rt.block_on(run_daemon(
             app_state,
             update_lists,
-            dns_bind,
-            http_bind,
-            socks5_bind,
             api_bind,
             shutdown_tx,
             shutdown_rx,
@@ -218,13 +224,9 @@ fn main() -> anyhow::Result<()> {
     }
 }
 
-#[allow(clippy::too_many_arguments)]
 async fn run_daemon(
     app_state: Arc<AppState>,
     update_lists: bool,
-    dns_bind: String,
-    http_bind: String,
-    socks5_bind: String,
     api_bind: String,
     shutdown_tx: watch::Sender<bool>,
     shutdown_rx: watch::Receiver<bool>,
@@ -275,71 +277,10 @@ async fn run_daemon(
         .reload_from_config(&config_snapshot, &data_dir);
     info!(active_rules, data_dir = %data_dir.display(), "Filter engine initialized");
 
-    // 1. Start Local DNS Server
-    if config_snapshot.dns.enabled {
-        let mut dns_cfg = config_snapshot.dns.clone();
-        dns_cfg.listen_addr = dns_bind.clone();
-        let dns_srv = Arc::new(DnsServer::new(
-            dns_cfg,
-            Arc::clone(&app_state.engine),
-            Arc::clone(&app_state.stats),
-        ));
-        match dns_srv.bind().await {
-            Ok(sock) => {
-                let rx = shutdown_rx.clone();
-                tokio::spawn(async move {
-                    if let Err(e) = dns_srv.serve(sock, rx).await {
-                        warn!(error = %e, "DNS server stopped with error");
-                    }
-                });
-            }
-            Err(e) => {
-                warn!(addr = %dns_bind, error = %e, "Could not bind DNS server (continuing without DNS)");
-            }
-        }
-    }
+    // 1. Start configured listeners (UDP DNS, HTTP/HTTPS Proxy, SOCKS5 Proxy) via ServiceManager
+    app_state.services.apply_config(&config_snapshot).await;
 
-    // 2. Start HTTP/HTTPS Proxy
-    if config_snapshot.proxy.http_enabled {
-        let http_srv = Arc::new(HttpProxyServer::new(
-            Arc::clone(&app_state.proxy_config),
-            Arc::clone(&app_state.engine),
-            Arc::clone(&app_state.stats),
-        ));
-        match http_srv.bind(&http_bind).await {
-            Ok(listener) => {
-                let rx = shutdown_rx.clone();
-                tokio::spawn(async move {
-                    let _ = http_srv.serve(listener, rx).await;
-                });
-            }
-            Err(e) => {
-                warn!(addr = %http_bind, error = %e, "Could not bind HTTP proxy");
-            }
-        }
-    }
-
-    // 3. Start SOCKS5 Proxy
-    if config_snapshot.proxy.socks5_enabled {
-        let socks_srv = Arc::new(Socks5ProxyServer::new(
-            Arc::clone(&app_state.proxy_config),
-            Arc::clone(&app_state.engine),
-            Arc::clone(&app_state.stats),
-        ));
-        match socks_srv.bind(&socks5_bind).await {
-            Ok(listener) => {
-                let rx = shutdown_rx.clone();
-                tokio::spawn(async move {
-                    let _ = socks_srv.serve(listener, rx).await;
-                });
-            }
-            Err(e) => {
-                warn!(addr = %socks5_bind, error = %e, "Could not bind SOCKS5 proxy");
-            }
-        }
-    }
-
-    // 4. Enable OS System Proxy & System DNS if configured
+    // 2. Enable OS System Proxy & System DNS if configured
     if config_snapshot.system_proxy_enabled {
         if let Err(e) = core_os::enable_system_proxy(
             &data_dir,
@@ -355,11 +296,10 @@ async fn run_daemon(
         }
     }
 
-    // 4b. Background scheduled blocklist auto-updater + hourly SQLite log pruner
+    // 3. Background scheduled blocklist auto-updater + hourly SQLite log pruner
     {
         let updater_state = Arc::clone(&app_state);
         let mut rx = shutdown_rx.clone();
-        // Run an initial log prune on startup
         {
             let (days, max_rows) = {
                 let cfg = updater_state.config.read().unwrap();
@@ -374,7 +314,6 @@ async fn run_daemon(
         tokio::spawn(async move {
             let mut ticker = tokio::time::interval(std::time::Duration::from_secs(60));
             let mut minutes_elapsed: u64 = 0;
-            // Skip immediate tick so startup stays snappy; first check happens after 60s
             ticker.tick().await;
             loop {
                 tokio::select! {
@@ -424,10 +363,10 @@ async fn run_daemon(
         });
     }
 
-    // 5. Start Control API & Embedded Web Dashboard
-    let app = build_router(app_state);
+    // 4. Start Control API, Local DoH (`/dns-query`), PAC (`/proxy.pac`) & Embedded Web Dashboard
+    let app = build_router(Arc::clone(&app_state));
     let api_listener = TcpListener::bind(&api_bind).await?;
-    info!("Aegis Dashboard & API available at http://{api_bind}");
+    info!("Aegis v{} Dashboard & API available at http://{api_bind}", env!("CARGO_PKG_VERSION"));
 
     let mut api_shutdown_rx = shutdown_rx.clone();
     let shutdown_signal = async move {
@@ -452,7 +391,8 @@ async fn run_daemon(
         .with_graceful_shutdown(shutdown_signal)
         .await?;
 
-    // Always cleanly restore OS proxy & DNS settings on exit
+    // Cleanly stop managed listeners and restore OS proxy & DNS settings on exit
+    app_state.services.stop_all().await;
     let _ = core_os::disable_system_proxy(&data_dir);
     let _ = core_os::disable_system_dns(&data_dir);
     info!("Aegis stopped cleanly");

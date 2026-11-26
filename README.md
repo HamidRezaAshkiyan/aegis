@@ -1,18 +1,20 @@
-# Aegis — Open-Source System-Wide Ad & Tracker Blocker
+# Aegis v1.0 — System-Wide Ad Blocker, DoH, Anti-DPI & Proxy
 
-A minimal, lightweight, cross-platform (**Windows & macOS**) ad, tracker, and OS telemetry blocker written in Rust.
+A minimal, lightweight, cross-platform (**macOS, Windows, and Linux/Docker**) ad, tracker, and malware blocker written in Rust with **local & upstream DoH**, **user-space Anti-DPI**, **hot-reloadable listeners**, **one-step PC/Mac/Phone setup**, and **upstream proxy / VPN chaining**.
 
 ## Features
-- **Local DNS Server** (`127.0.0.1:5353` / `:53`) with **DoH / UDP upstream** and **CNAME cloaking defense**.
-- **HTTP/HTTPS Proxy** (`127.0.0.1:8080`) & **SOCKS5 Proxy** (`127.0.0.1:1080`) for browser, per-app, or system-wide filtering.
-- **VPN & Proxy Manager Chaining**: forward allowed traffic directly or chain through an upstream **SOCKS5 / HTTP proxy** (Clash, Mihomo, Sing-box, V2Ray, Nekoray) with live hot-switching.
-- **OS Telemetry & App Tracker Blocking**: ships with curated presets for **HaGeZi Multi PRO**, **Windows & Office Native Telemetry**, **Apple / macOS Telemetry**, **AdGuard DNS**, and **EasyPrivacy**, plus an offline baseline.
-- **Scheduled Blocklist Auto-Updates**: background updater refreshes enabled lists on a configurable interval using `ETag` / `If-Modified-Since` conditional HTTP requests.
-- **LAN / Pi-hole Mode & Dashboard Auth**: listen on `0.0.0.0` (`--lan`) with per-device/IP statistics and friendly device naming, plus optional password/token authentication (`--auth-token`).
-- **Native System Tray / Menu Bar App**: lightweight macOS menu bar & Windows system tray icon with live blocked counter, 1-click Pause (5m / 15m / 1h), System Proxy toggle, Open Dashboard, and Quit (`--no-tray` for headless mode).
-- **Crash-Safe OS Integration**: snapshots and restores macOS (`networksetup`) and Windows (`Registry` / PowerShell / `netsh`) **system proxy and system DNS** settings on exit or crash recovery.
-- **Background Service / Launch at Login**: `aegis service install | uninstall | status` for macOS `launchd`, Windows Task Scheduler / Startup, and Linux `systemd --user`.
-- **Real-Time Embedded Dashboard** (`http://127.0.0.1:4242`): live WebSocket traffic log, categorized counters, Devices (LAN) view, 1-click Allow/Block, Blocklist Manager, Quick Pause, and 1-click **Config & Rules Import/Export** (TOML/JSON).
+- **Safe-by-Default Blocking & Protection Profiles**: ships with **Balanced (HaGeZi Multi Normal + Threat Intelligence Mini)** by default for near-zero false positives, plus 1-click **Minimal**, **Balanced**, and **Strict + OS Telemetry** profiles and a DNS-safe Adblock parser that ignores browser-scoped `$third-party` / `$domain=` rules.
+- **Hot-Reloadable Listeners (No Restart Required)**: independently enable, disable, or change the bind address/port of **UDP DNS**, **Local DoH (`/dns-query`)**, **HTTP/HTTPS Proxy**, and **SOCKS5 Proxy** live from the dashboard (or pass `--no-dns`).
+- **DNS-over-HTTPS (Upstream & Local RFC 8484)**:
+  - **Upstream DoH** with presets (Cloudflare, Quad9, Google, AdGuard, Mullvad, or custom), **CNAME uncloaking**, and optional routing through your chained upstream proxy/VPN.
+  - **Local DoH Server** at `http://<host>:4242/dns-query` (GET & POST RFC 8484), active even when UDP DNS is disabled.
+- **Pure-Rust Anti-DPI Engine**: user-space **TLS ClientHello SNI Record Splitting** (parses the SNI extension and splits directly inside the hostname), **TCP Chunking**, and optional **HTTP Host Header Mix-Case** with per-domain bypass — zero root privileges or kernel drivers required.
+- **Enhanced Upstream Proxy & VPN Chaining**: chain allowed traffic into **Clash, Mihomo, Sing-box, V2Ray, Hiddify, Nekoray, Tor, or SSH tunnels** with **1-click Local Proxy Scanner**, username/password auth, bypass domains, and a live **Connection & Latency Tester**.
+- **One-Step Quick Setup (PC, Mac & Phone)**:
+  - 1-click **System Proxy**, **System DNS**, and **Start at Login (Background Service)** toggles.
+  - Auto-generated **PAC file** (`/proxy.pac`) + **offline SVG QR code** + step-by-step **iOS & Android** guides.
+  - Downloadable one-step configurator scripts for **macOS** (`setup-aegis-macos.sh`) and **Windows PowerShell 7** (`setup-aegis-windows.ps1`), both with undo support.
+- **Modern Embedded Dashboard** (`http://127.0.0.1:4242`): sidebar layout with Dark/Light theme, 24-hour traffic chart, real-time WebSocket activity stream with matched-rule attribution & 1-click Allow/Block, Domain Rule Tester, Devices (LAN) view, and TOML/JSON backup/restore.
 
 ## Quick Start
 
@@ -26,13 +28,15 @@ cargo run --release -- --update-lists
 
 ### Default Endpoints
 - **Web Dashboard & API**: `http://127.0.0.1:4242`
+- **Proxy Auto-Config (PAC)**: `http://127.0.0.1:4242/proxy.pac`
+- **Local DoH (RFC 8484)**: `http://127.0.0.1:4242/dns-query`
 - **HTTP/HTTPS Proxy**: `127.0.0.1:8080`
 - **SOCKS5 Proxy**: `127.0.0.1:1080`
-- **Local DNS**: `127.0.0.1:5353` (pass `--dns-addr 127.0.0.1:53` with elevated privileges for standard port 53)
+- **Local UDP DNS**: `127.0.0.1:5353` (pass `--no-dns` to disable, or `--dns-addr 127.0.0.1:53` with elevated privileges)
 
 ## Using Alongside a VPN or Proxy Manager
-1. **Clash / Sing-box / V2Ray (Proxy Mode)**: Open the **Proxy & VPN** tab in the dashboard, choose **Chain via Upstream SOCKS5 Proxy**, and enter `127.0.0.1:7890` (Clash) or `127.0.0.1:10808` (V2Ray/Sing-box). Point apps or system proxy to Aegis (`127.0.0.1:8080` / `:1080`).
-2. **WireGuard / OpenVPN**: Run Aegis DNS on port `53` (`sudo aegis --dns-addr 127.0.0.1:53`) and set `DNS = 127.0.0.1` in your VPN profile.
+1. **Clash / Sing-box / V2Ray / Hiddify / Tor**: Open **Proxy, DoH & Anti-DPI**, click **Scan Local Proxies**, pick your running proxy, click **Test Connection**, and click **Save & Apply Live**.
+2. **WireGuard / Tailscale / Outline (TUN VPN)**: Either point your VPN's DNS to Aegis (`127.0.0.1` on port 53) or disable Aegis's UDP DNS listener live in the dashboard and use Aegis purely as a filtering/Anti-DPI proxy.
 
 ## Running with Docker
 
@@ -40,23 +44,14 @@ cargo run --release -- --update-lists
 # Build the image
 docker build -t aegis .
 
-# Run as a LAN / Pi-hole DNS & proxy blocker with persistent /data volume
+# Run as a LAN / Pi-hole DNS, DoH & proxy blocker with persistent /data volume
 docker run -d --name aegis --restart unless-stopped \
   -p 53:53/udp \
   -p 8080:8080 \
   -p 1080:1080 \
   -p 4242:4242 \
   -v aegis-data:/data \
-  aegis
-```
-
-To enable dashboard password/token auth in Docker, pass `--auth-token`:
-
-```bash
-docker run -d --name aegis --restart unless-stopped \
-  -p 53:53/udp -p 8080:8080 -p 1080:1080 -p 4242:4242 \
-  -v aegis-data:/data \
-  aegis --lan --no-tray --data-dir /data --dns-addr 0.0.0.0:53 --update-lists --auth-token "your-secret-token"
+  aegis --lan --no-tray --data-dir /data --dns-addr 0.0.0.0:53 --update-lists
 ```
 
 ## Running Tests

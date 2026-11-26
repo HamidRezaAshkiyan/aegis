@@ -1,9 +1,19 @@
+use crate::anti_dpi::should_bypass;
 use anyhow::{bail, Context};
 use base64::Engine as _;
 use core_engine::{ProxyConfig, UpstreamMode};
-use std::time::Duration;
+use serde::Serialize;
+use std::time::{Duration, Instant};
 use tokio::io::{AsyncReadExt, AsyncWriteExt};
 use tokio::net::TcpStream;
+
+/// Returns true if `target_host` should connect directly rather than via the upstream proxy.
+pub fn is_direct_route(cfg: &ProxyConfig, target_host: &str) -> bool {
+    if cfg.upstream_mode == UpstreamMode::Direct {
+        return true;
+    }
+    should_bypass(target_host, &cfg.upstream_bypass)
+}
 
 /// Connect to `target_host:target_port` either directly or chained through an upstream
 /// SOCKS5 or HTTP proxy (e.g., Clash, Sing-box, V2Ray, Nekoray, SSH tunnel).
@@ -13,16 +23,20 @@ pub async fn connect_outbound(
     target_port: u16,
 ) -> anyhow::Result<TcpStream> {
     let timeout = Duration::from_secs(15);
+    if is_direct_route(cfg, target_host) {
+        let stream =
+            tokio::time::timeout(timeout, TcpStream::connect((target_host, target_port)))
+                .await
+                .context("Direct connect timed out")?
+                .with_context(|| {
+                    format!("Direct connect failed to {target_host}:{target_port}")
+                })?;
+        let _ = stream.set_nodelay(true);
+        return Ok(stream);
+    }
+
     match cfg.upstream_mode {
-        UpstreamMode::Direct => {
-            let stream =
-                tokio::time::timeout(timeout, TcpStream::connect((target_host, target_port)))
-                    .await
-                    .context("Direct connect timed out")?
-                    .with_context(|| format!("Direct connect failed to {target_host}:{target_port}"))?;
-            let _ = stream.set_nodelay(true);
-            Ok(stream)
-        }
+        UpstreamMode::Direct => unreachable!(),
         UpstreamMode::Socks5 => {
             if cfg.upstream_addr.trim().is_empty() {
                 bail!("Upstream SOCKS5 mode enabled but upstream_addr is empty");
@@ -60,6 +74,107 @@ pub async fn connect_outbound(
     }
 }
 
+#[derive(Debug, Clone, Serialize)]
+pub struct UpstreamTestResult {
+    pub ok: bool,
+    pub latency_ms: u64,
+    pub mode: UpstreamMode,
+    pub upstream_addr: String,
+    pub message: String,
+}
+
+/// Test connectivity through the configured outbound route (Direct, SOCKS5, or HTTP).
+pub async fn test_upstream(cfg: &ProxyConfig) -> UpstreamTestResult {
+    let started = Instant::now();
+    // Temporarily clear bypass so we definitely test the configured upstream proxy
+    let mut test_cfg = cfg.clone();
+    test_cfg.upstream_bypass.clear();
+    match tokio::time::timeout(
+        Duration::from_secs(6),
+        connect_outbound(&test_cfg, "1.1.1.1", 443),
+    )
+    .await
+    {
+        Ok(Ok(_stream)) => UpstreamTestResult {
+            ok: true,
+            latency_ms: started.elapsed().as_millis() as u64,
+            mode: cfg.upstream_mode.clone(),
+            upstream_addr: cfg.upstream_addr.clone(),
+            message: "Connected successfully to 1.1.1.1:443".to_string(),
+        },
+        Ok(Err(e)) => UpstreamTestResult {
+            ok: false,
+            latency_ms: started.elapsed().as_millis() as u64,
+            mode: cfg.upstream_mode.clone(),
+            upstream_addr: cfg.upstream_addr.clone(),
+            message: e.to_string(),
+        },
+        Err(_) => UpstreamTestResult {
+            ok: false,
+            latency_ms: started.elapsed().as_millis() as u64,
+            mode: cfg.upstream_mode.clone(),
+            upstream_addr: cfg.upstream_addr.clone(),
+            message: "Connection test timed out after 6s".to_string(),
+        },
+    }
+}
+
+#[derive(Debug, Clone, Serialize)]
+pub struct DetectedProxy {
+    pub name: String,
+    pub mode: UpstreamMode,
+    pub addr: String,
+}
+
+/// Probe well-known localhost proxy ports (Clash, V2Ray, Sing-box, Hiddify, Tor, etc.)
+/// to help users chain Aegis in one click. Skips any ports owned by Aegis itself.
+pub async fn scan_local_proxies(skip_ports: &[u16]) -> Vec<DetectedProxy> {
+    let candidates: &[(&str, UpstreamMode, u16)] = &[
+        ("Clash / Mihomo (Mixed)", UpstreamMode::Socks5, 7890),
+        ("Clash Verge (Mixed)", UpstreamMode::Socks5, 7897),
+        ("V2Ray / v2rayN (SOCKS5)", UpstreamMode::Socks5, 10808),
+        ("V2Ray / v2rayN (HTTP)", UpstreamMode::Http, 10809),
+        ("Sing-box / Nekoray (Mixed)", UpstreamMode::Socks5, 2080),
+        ("Hiddify (Mixed)", UpstreamMode::Socks5, 12334),
+        ("Tor (SOCKS5)", UpstreamMode::Socks5, 9050),
+        ("Shadowsocks / SSH (SOCKS5)", UpstreamMode::Socks5, 1080),
+        ("Local HTTP Proxy", UpstreamMode::Http, 8080),
+        ("Local HTTP Proxy (8888)", UpstreamMode::Http, 8888),
+    ];
+
+    let mut handles = Vec::new();
+    for &(name, ref mode, port) in candidates {
+        if skip_ports.contains(&port) {
+            continue;
+        }
+        let name = name.to_string();
+        let mode = mode.clone();
+        handles.push(tokio::spawn(async move {
+            let addr = format!("127.0.0.1:{port}");
+            let ok = tokio::time::timeout(
+                Duration::from_millis(150),
+                TcpStream::connect(&addr),
+            )
+            .await
+            .map(|r| r.is_ok())
+            .unwrap_or(false);
+            if ok {
+                Some(DetectedProxy { name, mode, addr })
+            } else {
+                None
+            }
+        }));
+    }
+
+    let mut found = Vec::new();
+    for h in handles {
+        if let Ok(Some(proxy)) = h.await {
+            found.push(proxy);
+        }
+    }
+    found
+}
+
 async fn connect_via_socks5(
     upstream_addr: &str,
     username: Option<&str>,
@@ -73,7 +188,7 @@ async fn connect_via_socks5(
     let _ = stream.set_nodelay(true);
 
     // 1. Greeting
-    let has_auth = username.is_some() && password.is_some();
+    let has_auth = username.is_some_and(|u| !u.is_empty()) && password.is_some();
     if has_auth {
         stream.write_all(&[0x05, 0x02, 0x00, 0x02]).await?;
     } else {
@@ -164,7 +279,7 @@ async fn connect_via_http(
     let mut req = format!(
         "CONNECT {target_host}:{target_port} HTTP/1.1\r\nHost: {target_host}:{target_port}\r\n"
     );
-    if let (Some(u), Some(p)) = (username, password) {
+    if let (Some(u), Some(p)) = (username.filter(|s| !s.is_empty()), password) {
         let token = base64::engine::general_purpose::STANDARD.encode(format!("{u}:{p}"));
         req.push_str(&format!("Proxy-Authorization: Basic {token}\r\n"));
     }

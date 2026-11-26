@@ -1,6 +1,7 @@
-use crate::upstream::connect_outbound;
+use crate::anti_dpi::relay_tunnel;
+use crate::upstream::{connect_outbound, is_direct_route};
 use chrono::Utc;
-use core_engine::{FilterDecision, FilterEngine, ProxyConfig};
+use core_engine::{AntiDpiConfig, FilterDecision, FilterEngine, ProxyConfig};
 use core_stats::{StatsStore, TrafficEvent, TrafficProtocol};
 use std::net::{Ipv4Addr, Ipv6Addr, SocketAddr};
 use std::sync::{Arc, RwLock};
@@ -12,6 +13,7 @@ use tracing::{debug, info};
 
 pub struct Socks5ProxyServer {
     config: Arc<RwLock<ProxyConfig>>,
+    anti_dpi: Arc<RwLock<AntiDpiConfig>>,
     engine: Arc<FilterEngine>,
     stats: Arc<StatsStore>,
 }
@@ -19,11 +21,13 @@ pub struct Socks5ProxyServer {
 impl Socks5ProxyServer {
     pub fn new(
         config: Arc<RwLock<ProxyConfig>>,
+        anti_dpi: Arc<RwLock<AntiDpiConfig>>,
         engine: Arc<FilterEngine>,
         stats: Arc<StatsStore>,
     ) -> Self {
         Self {
             config,
+            anti_dpi,
             engine,
             stats,
         }
@@ -150,6 +154,7 @@ impl Socks5ProxyServer {
 
         // 4. Connect outbound (Direct or Chained Upstream Proxy)
         let cfg = self.config.read().unwrap().clone();
+        let direct = is_direct_route(&cfg, &target_host);
         let mut outbound = match connect_outbound(&cfg, &target_host, target_port).await {
             Ok(s) => s,
             Err(_) => {
@@ -164,7 +169,7 @@ impl Socks5ProxyServer {
         self.stats.record(TrafficEvent {
             timestamp: Utc::now(),
             protocol: TrafficProtocol::Socks5,
-            domain: target_host,
+            domain: target_host.clone(),
             client: peer.ip().to_string(),
             decision: FilterDecision::Allow,
             latency_ms,
@@ -175,7 +180,8 @@ impl Socks5ProxyServer {
             .write_all(&[0x05, 0x00, 0x00, 0x01, 0, 0, 0, 0, 0, 0])
             .await?;
 
-        let _ = tokio::io::copy_bidirectional(&mut client, &mut outbound).await;
+        let dpi_cfg = self.anti_dpi.read().unwrap().clone();
+        relay_tunnel(&mut client, &mut outbound, &[], &dpi_cfg, &target_host, direct).await;
         Ok(())
     }
 }

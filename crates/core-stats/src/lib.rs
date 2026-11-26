@@ -1,7 +1,9 @@
 pub mod events;
 pub mod store;
 
-pub use events::{ClientStats, DomainCount, StatsSummary, TrafficEvent, TrafficProtocol};
+pub use events::{
+    ClientStats, DomainCount, StatsSummary, TimelineBucket, TrafficEvent, TrafficProtocol,
+};
 pub use store::StatsStore;
 
 #[cfg(test)]
@@ -102,5 +104,36 @@ mod tests {
         let deleted_cap = store.prune_logs(0, 4).unwrap();
         assert_eq!(deleted_cap, 2);
         assert_eq!(store.query_log_count(), 4);
+    }
+
+    #[test]
+    fn timeline_hourly_aggregates_recent_traffic() {
+        let store = StatsStore::in_memory().unwrap();
+        store.record(TrafficEvent {
+            timestamp: Utc::now(),
+            protocol: TrafficProtocol::Doh,
+            domain: "ads.example.com".to_string(),
+            client: "192.168.1.50".to_string(),
+            decision: FilterDecision::Block {
+                category: BlockCategory::Ad,
+                matched_rule: "ads.example.com".to_string(),
+                list_name: "Test".to_string(),
+            },
+            latency_ms: 1,
+        });
+        store.record(TrafficEvent {
+            timestamp: Utc::now(),
+            protocol: TrafficProtocol::Doh,
+            domain: "example.com".to_string(),
+            client: "192.168.1.50".to_string(),
+            decision: FilterDecision::Allow,
+            latency_ms: 5,
+        });
+
+        let buckets = store.timeline_hourly(6);
+        assert_eq!(buckets.len(), 6);
+        let latest = buckets.last().unwrap();
+        assert_eq!(latest.total, 2);
+        assert_eq!(latest.blocked, 1);
     }
 }
